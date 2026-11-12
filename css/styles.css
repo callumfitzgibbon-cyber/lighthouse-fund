@@ -90,6 +90,10 @@ a:hover { text-decoration: underline; }
 .avatar.xl { width: 84px; height: 84px; font-size: 28px; }
 
 #banner .banner { background: var(--warn-bg); color: var(--warn-ink); padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f0dca6; }
+#banner .banner.demo { background: #16181d; color: #e4e6ea; border-bottom: 2px solid var(--crimson); }
+#banner .banner.demo .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.banner-actions { display: flex; align-items: center; gap: 14px; }
+#banner .banner.demo .link { color: #ff9aa9; }
 main { padding-top: 28px; padding-bottom: 40px; min-height: 62vh; outline: none; }
 .foot { color: var(--muted); font-size: 12px; padding-top: 16px; padding-bottom: 32px; border-top: 1px solid var(--line); }
 .foot p { max-width: 760px; }

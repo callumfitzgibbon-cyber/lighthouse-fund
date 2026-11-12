@@ -2,7 +2,19 @@
   "use strict";
 
   var CFG = window.LIGHTHOUSE_CONFIG;
-  var DEMO = !CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY;
+  var NO_DATABASE = !CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY;
+  var LS_DEMO_ON = "lighthouse.demo.on";
+  // Demo mode can be switched on from the site. It keeps trades in this browser and never touches the real fund.
+  var DEMO_CHOSEN = false;
+  try {
+    if (/[?&]demo=1\b/.test(window.location.search)) localStorage.setItem(LS_DEMO_ON, "1");
+    DEMO_CHOSEN = localStorage.getItem(LS_DEMO_ON) === "1";
+  } catch (e) { DEMO_CHOSEN = /[?&]demo=1\b/.test(window.location.search); }
+  var DEMO = NO_DATABASE || DEMO_CHOSEN;
+  function setDemo(on) {
+    try { if (on) localStorage.setItem(LS_DEMO_ON, "1"); else localStorage.removeItem(LS_DEMO_ON); } catch (e) { /* storage unavailable */ }
+    window.location.href = window.location.origin + window.location.pathname + (on ? "?demo=1" : "");
+  }
 
   var state = {
     view: "portfolio",
@@ -163,7 +175,28 @@
     },
     signOut: function () { return Promise.resolve(); },
     listMembers: function () { return Promise.resolve([]); },
-    reset: function () { try { localStorage.removeItem(LS_TRADES); } catch (e) { /* ignore */ } }
+    reset: function () { try { localStorage.removeItem(LS_TRADES); } catch (e) { /* ignore */ } },
+    // Fills the demo with a realistic starting portfolio at today's prices.
+    seed: function () {
+      var day = 86400000, now = Date.now();
+      var list = [{ id: 1, created_at: new Date(now - 12 * day).toISOString(), type: "deposit", code: null, sleeve: null, quantity: null, price: null, brokerage: 0, cash_amount: CFG.STARTING_CAPITAL, note: "Notional starting capital", trader_name: "System" }];
+      var plan = [
+        [CFG.ETF_CODE, "index", 45000, 11, "Core index holding"],
+        ["JBH", "competition", 10000, 9, "Competition winner: retail earnings momentum"],
+        ["XRO", "competition", 10000, 9, "Competition runner-up: subscriber growth"],
+        ["COH", "competition", 10000, 9, "Competition third place: implant demand"],
+        ["NST", "active", 8000, 4, "Active sleeve: gold exposure"]
+      ];
+      plan.forEach(function (row) {
+        var info = state.prices[row[0]];
+        if (!info || !(info.price > 0)) return;
+        var qty = Math.floor(row[2] / info.price);
+        if (qty < 1) return;
+        list.push({ id: list.length + 1, created_at: new Date(now - row[3] * day).toISOString(), type: "buy", code: info.code, sleeve: row[1], quantity: qty,
+          price: round2(info.price * (1 - (info.change_pct || 0) / 100)), brokerage: 0, cash_amount: null, note: row[4], trader_name: state.user.name });
+      });
+      try { localStorage.setItem(LS_TRADES, JSON.stringify(list)); } catch (e) { /* storage unavailable */ }
+    }
   };
 
   var sb = null;
@@ -409,10 +442,14 @@
       '<span class="strip-item hide-sm"><b>Cash</b> ' + fmtMoney(pf.cash) + "</span>";
 
     var notes = [];
-    if (DEMO) notes.push("Demo mode: trades are saved in this browser only and nobody else can see them.");
+    var demoNote = DEMO ? '<div class="banner demo"><div class="wrap"><span><b>Demo mode.</b> Trade as much as you like. Everything here stays in this browser and the real fund is not touched.</span>' +
+      '<span class="banner-actions"><button type="button" class="link" data-action="seed-demo">Load sample portfolio</button><button type="button" class="link" data-action="reset-demo">Start again</button>' +
+      (NO_DATABASE ? "" : '<button type="button" class="btn small-btn" data-action="exit-demo">Exit demo</button>') + "</span></div></div>" : "";
     if (state.pricesAreSample) notes.push("Showing sample prices, not real market prices.");
     if (state.priceError) notes.push("Price feed problem: " + state.priceError + ".");
-    $("#banner").innerHTML = notes.length ? '<div class="banner"><div class="wrap">' + esc(notes.join(" ")) + "</div></div>" : "";
+    var demoLink = $("#demo-link");
+    if (demoLink) demoLink.hidden = DEMO;
+    $("#banner").innerHTML = demoNote + (notes.length ? '<div class="banner"><div class="wrap">' + esc(notes.join(" ")) + "</div></div>" : "");
   }
 
   function roleLabel(r) { return { viewer: "Viewer", trader: "Trader", admin: "Admin" }[r] || r; }
@@ -680,7 +717,7 @@
       '<button type="button" class="btn" data-action="export">' + ICON.down + "Download Excel</button></div>" +
       '<div class="card flush"><div class="table-scroll"><table><thead><tr><th class="num">No.</th><th>When</th><th>Type</th><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th>' + (showBrokerage ? '<th class="num">Brokerage</th>' : "") + '<th class="num">Cash effect</th><th>By</th><th>Reason</th></tr></thead><tbody>' +
       (rows || '<tr><td colspan="11" class="empty">No trades yet.</td></tr>') + "</tbody></table></div></div>" +
-      (DEMO ? '<p style="margin-top:12px"><button type="button" class="btn secondary" data-action="reset-demo">Reset demo data</button></p>' : "");
+      "";
   }
 
   function renderMembers() {
@@ -754,7 +791,8 @@
           "<h2>" + (signupMode ? "Create your account" : "Sign in") + "</h2>" +
           '<p class="muted small">' + (signupMode ? "New accounts can view the fund. The fund manager can then make you a trader." : "Welcome back. Sign in to manage the fund.") + "</p>" +
           form +
-          '<p class="auth-back"><button type="button" class="link" data-view="portfolio">View the fund without signing in</button></p>' +
+          '<p class="auth-back"><button type="button" class="link" data-view="portfolio">View the fund without signing in</button>' +
+            (DEMO ? "" : ' <span aria-hidden="true">·</span> <button type="button" class="link" data-action="enter-demo">Try demo mode</button>') + "</p>" +
         "</div></div>" +
       "</div>";
   }
@@ -1007,6 +1045,11 @@
     else if (a === "signout") store.signOut().then(function () { state.user = null; state.view = "portfolio"; render(); });
     else if (a === "pick-avatar") $("#avatar-file").click();
     else if (a === "remove-avatar") saveAvatar(null);
+    else if (a === "enter-demo") setDemo(true);
+    else if (a === "seed-demo") {
+      if (window.confirm("Replace the demo trades with a sample portfolio?")) { demoStore.seed(); state.order.code = null; refreshAll().then(function () { go("portfolio"); toast("Sample portfolio loaded"); }); }
+    }
+    else if (a === "exit-demo") setDemo(false);
     else if (a === "reset-demo") {
       if (window.confirm("Clear all demo trades and start again with " + fmtMoney(CFG.STARTING_CAPITAL) + "?")) { demoStore.reset(); refreshAll(); }
     } else if (a === "toggle-signup") {
