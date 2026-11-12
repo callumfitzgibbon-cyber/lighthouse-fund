@@ -752,7 +752,7 @@
             '<div><input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>' +
             '<button type="button" class="btn secondary" data-action="pick-avatar">' + (safeAvatar(u.avatar) ? "Change photo" : "Upload a photo") + '</button> ' +
             (safeAvatar(u.avatar) ? '<button type="button" class="btn quiet" data-action="remove-avatar">Remove</button>' : "") +
-            '<div class="muted small" style="margin-top:6px">You can position and zoom it after choosing.</div></div></div>' +
+            "</div></div>" +
           '<form id="name-form" novalidate><div class="field"><label for="p-name">Display name</label><input id="p-name" type="text" maxlength="60" autocomplete="name" value="' + esc(u.name) + '"></div>' +
           '<div class="form-msg" id="name-msg"></div><button type="submit" class="btn">Save name</button></form></div>' +
         '<div class="stack">' +
