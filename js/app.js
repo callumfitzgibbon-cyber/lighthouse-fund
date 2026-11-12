@@ -194,7 +194,7 @@
       return sb.auth.signInWithPassword({ email: email, password: password }).then(function (r) { if (r.error) throw new Error(r.error.message); });
     },
     signUp: function (email, password, name) {
-      return sb.auth.signUp({ email: email, password: password, options: { data: { display_name: name } } }).then(function (r) {
+      return sb.auth.signUp({ email: email, password: password, options: { data: { display_name: name }, emailRedirectTo: window.location.origin + window.location.pathname } }).then(function (r) {
         if (r.error) throw new Error(r.error.message);
         return r.data;
       });
