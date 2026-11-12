@@ -25,11 +25,12 @@
     pricesUpdated: null,
     pricesAreSample: false,
     priceError: null,
-    order: { code: null, side: "buy", qty: "", sleeve: "competition", note: "" },
+    order: { code: null, side: "buy", qty: "", sleeve: "competition", note: "", approval: "" },
     search: "",
     sector: "",
     coSearch: "",
     members: [],
+    freshIds: {},
     busy: false
   };
 
@@ -149,6 +150,11 @@
     updateAvatar: function (dataUrl) { return demoStore.saveProfile({ avatar: dataUrl }); },
     updateEmail: function (email) { return demoStore.saveProfile({ email: email }).then(function () { return true; }); },
     updatePassword: function () { return Promise.resolve(); },
+    // Demo mode makes up a code that changes every five minutes, to show how approval works.
+    getTradeCode: function () {
+      var w = Math.floor(Date.now() / 300000);
+      return Promise.resolve({ code: ("000000" + ((w * 7919 + 104729) * 2654435761 % 1000000)).slice(-6), expires: (w + 1) * 300000 });
+    },
     listTrades: function () {
       var list;
       try { list = JSON.parse(localStorage.getItem(LS_TRADES) || "null"); } catch (e) { list = null; }
@@ -217,7 +223,9 @@
         var u = session.user;
         return sb.from("profiles").select("*").eq("id", u.id).maybeSingle().then(function (r) {
           var p = r.data || {};
-          state.user = { id: u.id, email: u.email, name: p.display_name || u.email, role: p.role || "viewer", avatar: p.avatar_url || null };
+          state.user = { id: u.id, email: u.email, name: p.display_name || u.email, role: p.role || "viewer", avatar: p.avatar_url || null,
+            // Only ask for the charter once the database has the column for it.
+            needsCharter: Object.prototype.hasOwnProperty.call(p, "charter_agreed_at") && !p.charter_agreed_at };
         });
       });
     },
@@ -231,9 +239,9 @@
       });
     },
     addTrade: function (t) {
-      return sb.from("trades").insert({
+      return sb.from("trades").insert(Object.assign({
         type: t.type, code: t.code, sleeve: t.sleeve, quantity: t.quantity, price: t.price, note: t.note || null, trader_name: state.user.name
-      }).select().single().then(function (r) {
+      }, t.approval ? { approval_code: t.approval } : {})).select().single().then(function (r) {
         if (r.error) throw new Error(r.error.message);
         return r.data;
       });
@@ -242,7 +250,7 @@
       return sb.auth.signInWithPassword({ email: email, password: password }).then(function (r) { if (r.error) throw new Error(r.error.message); });
     },
     signUp: function (email, password, name) {
-      return sb.auth.signUp({ email: email, password: password, options: { data: { display_name: name }, emailRedirectTo: window.location.origin + window.location.pathname } }).then(function (r) {
+      return sb.auth.signUp({ email: email, password: password, options: { data: { display_name: name, charter_agreed: "true", charter_version: CFG.CHARTER_VERSION }, emailRedirectTo: window.location.origin + window.location.pathname } }).then(function (r) {
         if (r.error) throw new Error(r.error.message);
         return r.data;
       });
@@ -262,6 +270,19 @@
       });
     },
     setRole: function (id, role) { return liveStore.patchProfile(id, { role: role }); },
+    agreeCharter: function () { return liveStore.patchProfile(state.user.id, { charter_agreed_at: new Date().toISOString(), charter_version: CFG.CHARTER_VERSION }); },
+    setTitle: function (id, title) {
+      return liveStore.patchProfile(id, { title: title || null }).catch(function (e) {
+        throw new Error(/title/.test(e.message) ? "Job titles need the latest database update to be run in Supabase first." : e.message);
+      });
+    },
+    // The fund manager's current approval code. Only an admin account is given it.
+    getTradeCode: function () {
+      return sb.rpc("get_trade_code").then(function (r) {
+        if (r.error) throw new Error(r.error.message);
+        return { code: r.data.code, expires: new Date(r.data.expires_at).getTime() };
+      });
+    },
     updateName: function (name) {
       return liveStore.patchProfile(state.user.id, { display_name: name }).then(function () {
         return sb.auth.updateUser({ data: { display_name: name } });
@@ -412,13 +433,81 @@
     return ["Sat", "Sun"].indexOf(parts.weekday) < 0 && mins >= 600 && mins < 960;
   }
 
+  // ---------- charter agreement ----------
+  function charterPoints() {
+    return '<ul class="charter-points">' +
+      "<li>The Lighthouse Fund is a simulated portfolio run by AFSA for learning. No real money is invested and nothing here is financial advice.</li>" +
+      "<li>I will follow the fund's charter and investment mandate, and the directions of the Fund Manager.</li>" +
+      "<li>Every trade must be approved by the Fund Manager and is recorded permanently under my name.</li>" +
+      "<li>I will act honestly, tell the Fund Manager about any conflict of interest, and keep my login to myself.</li>" +
+      "</ul>" +
+      '<p class="small"><a href="' + esc(CFG.CHARTER_URL) + '" target="_blank" rel="noopener noreferrer">Read the full charter' + ICON.ext + "</a></p>";
+  }
+  function renderCharterGate() {
+    var need = !DEMO && state.user && state.user.needsCharter;
+    var el = $("#charter-modal");
+    if (!need) { if (el) el.remove(); return; }
+    if (el) return;
+    el = document.createElement("div");
+    el.className = "modal";
+    el.id = "charter-modal";
+    el.innerHTML = '<div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="charter-title">' +
+      '<h2 id="charter-title">Agree to the fund charter</h2><p class="muted small">Every member signs this once before using the fund.</p>' + charterPoints() +
+      '<label class="check-row"><input type="checkbox" id="charter-check"><span>I, ' + esc(state.user.name) + ", have read and agree to the Lighthouse Fund Charter.</span></label>" +
+      '<div class="modal-actions"><button type="button" class="btn secondary" data-action="signout">Sign out</button><button type="button" class="btn" data-action="agree-charter" disabled>Agree and continue</button></div></div>';
+    document.body.appendChild(el);
+  }
+
+  // ---------- trade approval code ----------
+  // Analysts need the fund manager's current code to place a trade. Fund managers trade without one.
+  function needsCode() { return !DEMO && canTrade() && !isAdmin(); }
+  var codeState = { code: null, expires: 0, error: null, loading: false, tried: 0 };
+
+  function codeCardHtml() {
+    if (!isAdmin()) return "";
+    return '<div class="card code-card" id="code-card">' + codeCardInner() + "</div>";
+  }
+  function codeCardInner() {
+    var head = '<div class="eyebrow light">Trade approval code</div>';
+    if (codeState.error) return head + '<p class="code-note">' + esc(codeState.error) + "</p>";
+    if (!codeState.code) return head + '<div class="code-digits">··· ···</div><p class="code-note">Loading…</p>';
+    var left = Math.max(0, Math.ceil((codeState.expires - Date.now()) / 1000));
+    return head +
+      '<div class="code-digits" aria-label="Approval code ' + codeState.code.split("").join(" ") + '">' + codeState.code.slice(0, 3) + " " + codeState.code.slice(3) + "</div>" +
+      '<div class="code-bar"><span style="width:' + Math.min(100, left / 3) + '%"></span></div>' +
+      '<div class="code-foot"><span>New code in ' + Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2) + '</span><button type="button" class="link" data-action="copy-code">Copy</button></div>' +
+      '<p class="code-note">Only you can see this. Give it to an analyst to approve their trade.</p>';
+  }
+  function tickCode() {
+    var el = $("#code-card");
+    if (!el || !isAdmin() || !store.getTradeCode) return;
+    var now = Date.now();
+    if ((!codeState.code || now >= codeState.expires) && !codeState.loading && now - codeState.tried > 5000) {
+      codeState.loading = true;
+      codeState.tried = now;
+      store.getTradeCode().then(function (c) {
+        codeState.code = c.code; codeState.expires = c.expires; codeState.error = null; codeState.loading = false; tickCode();
+      }).catch(function (e) {
+        codeState.loading = false;
+        codeState.code = null;
+        codeState.error = /get_trade_code|schema cache|not find/i.test(e.message) ? "Run the latest database update in Supabase to switch on approval codes." : "Could not load the code: " + e.message;
+        tickCode();
+      });
+    }
+    if (now >= codeState.expires && codeState.code) { codeState.code = null; }
+    el.innerHTML = codeCardInner();
+  }
+  setInterval(tickCode, 1000);
+
   function renderChrome() {
     document.body.classList.toggle("auth-page", state.view === "signin");
 
     var tabs = [["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
     if (isAdmin() && !DEMO) tabs.push(["members", "Members"]);
+    var unseen = isAdmin() && state.view !== "members" ? unseenMembers().length : 0;
     $("#nav").innerHTML = tabs.map(function (t) {
-      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" + t[1] + "</button>";
+      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" + t[1] +
+        (t[0] === "members" && unseen ? '<span class="count" title="New members">' + unseen + "</span>" : "") + "</button>";
     }).join("");
 
     var acc;
@@ -542,7 +631,7 @@
           '<div class="table-scroll"><table><thead><tr><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
           (rows || '<tr><td colspan="7" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
         "</tbody></table></div></div>" +
-        '<div class="stack">' +
+        '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" +
           '<div class="card"><h2>Latest trades</h2>' + (recent ? '<ul class="recent">' + recent + "</ul>" : '<p class="muted small" style="margin:0">No trades yet.</p>') + "</div>" +
         "</div>" +
@@ -625,6 +714,7 @@
       '<div class="field"><label for="qty">Number of shares</label><input id="qty" type="number" min="1" step="1" inputmode="numeric" value="' + esc(o.qty) + '"></div>' +
       sleeveField +
       '<div class="field"><label for="note">Reason for the trade</label><textarea id="note" rows="2" placeholder="One line on why">' + esc(o.note) + "</textarea></div>" +
+      (needsCode() ? '<div class="field"><label for="approval">Approval code from the fund manager</label><input id="approval" class="code-input" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="6 digits" value="' + esc(o.approval) + '"><div class="muted small" style="margin-top:5px">Every trade goes through the fund manager. Ask them for the current code. It changes every 5 minutes.</div></div>' : "") +
       '<div id="calc"></div>';
     renderCalc();
   }
@@ -642,7 +732,7 @@
     var cashAfter = o.side === "buy" ? pf.cash - total : pf.cash + total;
     var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
     var issues = qty > 0 ? validateOrder(o, pf) : [];
-    var ok = qty > 0 && !issues.length && !state.busy;
+    var ok = qty > 0 && !issues.length && !state.busy && (!needsCode() || /^\d{6}$/.test(o.approval));
 
     el.innerHTML =
       '<div class="summary">' +
@@ -720,25 +810,65 @@
       "";
   }
 
+  // "New" members are those who joined since the fund manager last opened the Members page on this device.
+  var LS_SEEN = "lighthouse.members.seen";
+  function membersSeenAt() {
+    var v = null;
+    try { v = localStorage.getItem(LS_SEEN); } catch (e) { /* storage unavailable */ }
+    return v;
+  }
+  function markMembersSeen() { try { localStorage.setItem(LS_SEEN, new Date().toISOString()); } catch (e) { /* storage unavailable */ } }
+  function unseenMembers() {
+    var seen = membersSeenAt();
+    if (!seen || !state.user) return [];
+    return state.members.filter(function (m) { return m.id !== state.user.id && m.created_at > seen; });
+  }
+
+  function orgNode(m) {
+    var fresh = state.freshIds[m.id];
+    return '<div class="org-node' + (fresh ? " fresh" : "") + (m.role === "admin" ? " lead" : "") + '">' + avatarHtml({ name: m.display_name || m.email, avatar: m.avatar_url }) +
+      '<span class="org-name">' + esc(m.display_name || m.email || "") + (m.id === state.user.id ? ' <span class="muted">(you)</span>' : "") + "</span>" +
+      '<span class="org-title">' + esc(m.title || roleLabel(m.role)) + "</span>" +
+      '<span class="muted small">Joined ' + esc(fmtDay(m.created_at)) + "</span>" +
+      (fresh ? '<span class="pill new">New</span>' : "") + "</div>";
+  }
+
+  // A tree: fund managers at the top, then one branch for each other role.
+  function orgChart() {
+    var of = function (role) { return state.members.filter(function (m) { return m.role === role; }); };
+    var branches = [["trader", "Analysts", "Research stocks and place approved trades"], ["viewer", "Viewers", "Can see the fund and its history"]];
+    return '<div class="org">' +
+      '<div class="org-root">' + (of("admin").map(orgNode).join("") || '<div class="org-empty muted small">No fund manager</div>') + "</div>" +
+      '<div class="org-branches">' + branches.map(function (b) {
+        var people = of(b[0]);
+        return '<div class="org-branch"><div class="org-group"><span class="org-group-name">' + b[1] + '<span class="org-count">' + people.length + '</span></span><span class="muted small">' + b[2] + "</span></div>" +
+          '<div class="org-people">' + (people.map(orgNode).join("") || '<div class="org-empty muted small">Nobody yet</div>') + "</div></div>";
+      }).join("") + "</div></div>";
+  }
+  function fmtDay(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "" : d.toLocaleDateString("en-AU", { timeZone: "Australia/Sydney", day: "numeric", month: "short", year: "numeric" });
+  }
+
   function renderMembers() {
     if (!isAdmin()) { state.view = "portfolio"; return render(); }
+    var freshCount = Object.keys(state.freshIds).length;
     var rows = state.members.map(function (m) {
       var me = m.id === state.user.id;
       var opts = ["admin", "trader", "viewer"].map(function (r) { return '<option value="' + r + '"' + (m.role === r ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("");
-      return '<tr><td><span class="person">' + avatarHtml({ name: m.display_name || m.email, avatar: m.avatar_url }) + "<span><b>" + esc(m.display_name || "") + "</b>" + (me ? ' <span class="pill">You</span>' : "") + '<span class="muted small">' + esc(m.email || "") + "</span></span></span></td>" +
-        '<td class="nowrap muted">' + esc(fmtDate(m.created_at)) + "</td>" +
+      return '<tr><td><span class="person">' + avatarHtml({ name: m.display_name || m.email, avatar: m.avatar_url }) + "<span><b>" + esc(m.display_name || "") + "</b>" + (me ? ' <span class="pill">You</span>' : "") + (state.freshIds[m.id] ? ' <span class="pill new">New</span>' : "") + '<span class="muted small">' + esc(m.email || "") + "</span></span></span></td>" +
+        '<td><input class="title-input" type="text" maxlength="40" placeholder="' + esc(roleLabel(m.role)) + '" value="' + esc(m.title || "") + '" data-title-for="' + esc(m.id) + '" aria-label="Job title for ' + esc(m.display_name || m.email || "") + '"></td>' +
+        '<td class="nowrap muted">' + esc(fmtDay(m.created_at)) + "</td>" +
+        '<td class="nowrap">' + (m.charter_agreed_at ? '<span class="pill ok">Signed ' + esc(fmtDay(m.charter_agreed_at)) + "</span>" : '<span class="pill">Not signed</span>') + "</td>" +
         '<td class="num">' + (me ? '<span class="pill ok">Fund Manager</span>' : '<select class="role-select" data-member="' + esc(m.id) + '" aria-label="Role for ' + esc(m.email || "") + '">' + opts + "</select>") + "</td></tr>";
     }).join("");
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>Members</h1><div class="muted small">Everyone who has created an account. New accounts start as viewers.</div></div></div>' +
-      '<div class="cards three">' +
-        '<div class="card stat"><div class="eyebrow">Fund Manager</div><div class="stat-sub">Places trades and sets everyone\'s role.</div></div>' +
-        '<div class="card stat"><div class="eyebrow">Analyst</div><div class="stat-sub">Can place buy and sell orders.</div></div>' +
-        '<div class="card stat"><div class="eyebrow">Viewer</div><div class="stat-sub">Can see the fund and its history.</div></div>' +
-      "</div>" +
-      '<div class="card flush"><div class="table-scroll"><table><thead><tr><th>Member</th><th>Joined</th><th class="num">Role</th></tr></thead><tbody>' +
-      (rows || '<tr><td colspan="3" class="empty">No members yet.</td></tr>') + "</tbody></table></div></div>" +
-      '<p class="muted small" style="margin-top:12px">Your own role is locked so the fund can never be left without a fund manager. To hand over, make someone else a fund manager and ask them to change yours. Other people appear here once they create an account on the sign-in page.</p>';
+      '<div class="page-head"><div><h1>Members</h1><div class="muted small">Everyone who has created an account. New accounts start as viewers. Only fund managers can see this page.</div></div></div>' +
+      (freshCount ? '<p class="notice">' + freshCount + (freshCount === 1 ? " person has" : " people have") + " joined since you last looked. They are marked New below.</p>" : "") +
+      '<div class="members-top"><div class="card"><h2>Org chart</h2>' + orgChart() + "</div>" + codeCardHtml() + "</div>" +
+      '<div class="card flush"><div class="card-head"><h2>Roles and job titles</h2></div><div class="table-scroll"><table><thead><tr><th>Member</th><th>Job title</th><th>Joined</th><th>Charter</th><th class="num">Access</th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="5" class="empty">No members yet.</td></tr>') + "</tbody></table></div></div>" +
+      '<p class="muted small" style="margin-top:12px">Access decides what someone can do on the site. The job title is free text for the org chart, for example Head of Research or Risk Officer. Your own access is locked so the fund can never be left without a fund manager. To hand over, make someone else a fund manager and ask them to change yours. Other people appear here once they create an account on the sign-in page.</p>';
   }
 
   function renderProfile() {
@@ -774,6 +904,8 @@
           '<div class="field" id="name-field"' + (signupMode ? "" : " hidden") + '><label for="name">Your name</label><input id="name" type="text" autocomplete="name" maxlength="60"></div>' +
           '<div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" required></div>' +
           '<div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="' + (signupMode ? "new-password" : "current-password") + '" minlength="8" required></div>' +
+          (signupMode ? '<div class="charter-box"><div class="eyebrow">Member agreement</div>' + charterPoints() +
+            '<label class="check-row"><input type="checkbox" id="agree"><span>I have read and agree to the Lighthouse Fund Charter.</span></label></div>' : "") +
           '<div id="auth-msg"></div>' +
           '<button type="submit" class="btn block" id="auth-submit">' + (signupMode ? "Create account" : "Sign in") + "</button>" +
         "</form>" +
@@ -806,12 +938,20 @@
     else if (state.view === "profile") renderProfile();
     else if (state.view === "signin") renderSignin();
     else renderPortfolio();
+    renderCharterGate();
+    tickCode();
   }
 
   function go(view) {
     state.view = view;
     if (view === "members" && isAdmin() && !DEMO) {
-      store.listMembers().then(function (m) { state.members = m; if (state.view === "members") render(); }).catch(function (e) { toast(e.message); });
+      store.listMembers().then(function (m) {
+        state.members = m;
+        state.freshIds = {};
+        unseenMembers().forEach(function (x) { state.freshIds[x.id] = true; });
+        markMembersSeen();
+        if (state.view === "members") render();
+      }).catch(function (e) { toast(e.message); });
     }
     render();
     window.scrollTo(0, 0);
@@ -822,7 +962,12 @@
   function refreshAll() {
     return Promise.all([
       loadPrices(),
-      store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); })
+      store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); }),
+      // The fund manager's member list, so the Members tab can flag new sign-ups.
+      isAdmin() && !DEMO ? store.listMembers().then(function (m) {
+        state.members = m;
+        if (!membersSeenAt()) markMembersSeen();
+      }).catch(function () { /* shown when the Members page is opened */ }) : null
     ]).then(function () {
       if (state.view === "signin" && state.user) state.view = "portfolio";
       // Avoid wiping anything the person is in the middle of typing.
@@ -856,11 +1001,12 @@
 
     state.busy = true;
     renderCalc();
-    store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: info.price, note: o.note.trim() })
+    store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: info.price, note: o.note.trim(), approval: needsCode() ? o.approval : "" })
       .then(function () {
         state.busy = false;
         state.order.qty = "";
         state.order.note = "";
+        state.order.approval = "";
         toast(verb + " order filled: " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(info.price));
         return store.listTrades();
       })
@@ -937,6 +1083,10 @@
     var msg = $("#auth-msg");
     if (!email || password.length < 8 || (signupMode && !name)) {
       msg.innerHTML = '<ul class="issues"><li>Enter your email' + (signupMode ? ", your name" : "") + " and a password of at least 8 characters.</li></ul>";
+      return;
+    }
+    if (signupMode && !$("#agree").checked) {
+      msg.innerHTML = '<ul class="issues"><li>Tick the box to agree to the charter before creating an account.</li></ul>';
       return;
     }
     $("#auth-submit").disabled = true;
@@ -1112,6 +1262,14 @@
     else if (a === "remove-avatar") saveAvatar(null);
     else if (a === "crop-cancel") closeCropper();
     else if (a === "crop-save") { var dataUrl = croppedDataUrl(); closeCropper(); saveAvatar(dataUrl); }
+    else if (a === "agree-charter") {
+      t.disabled = true;
+      store.agreeCharter().then(function () { state.user.needsCharter = false; render(); toast("Thanks. Your agreement has been recorded."); })
+        .catch(function (err) { t.disabled = false; toast("Not saved: " + err.message); });
+    }
+    else if (a === "copy-code") {
+      if (codeState.code && navigator.clipboard) navigator.clipboard.writeText(codeState.code).then(function () { toast("Code copied"); }, function () { toast("Could not copy. Read it out instead."); });
+    }
     else if (a === "enter-demo") setDemo(true);
     else if (a === "seed-demo") {
       if (window.confirm("Replace the demo trades with a sample portfolio?")) { demoStore.seed(); state.order.code = null; refreshAll().then(function () { go("portfolio"); toast("Sample portfolio loaded"); }); }
@@ -1148,10 +1306,20 @@
     else if (id === "co-search") { state.coSearch = e.target.value; renderCompanyRows(); }
     else if (id === "qty") { state.order.qty = e.target.value; renderCalc(); }
     else if (id === "note") { state.order.note = e.target.value; }
+    else if (id === "approval") { e.target.value = e.target.value.replace(/\D/g, ""); state.order.approval = e.target.value; renderCalc(); }
   });
 
   document.addEventListener("change", function (e) {
     if (e.target.id === "sleeve") { state.order.sleeve = e.target.value; renderCalc(); }
+    else if (e.target.id === "charter-check") { $('[data-action="agree-charter"]').disabled = !e.target.checked; }
+    else if (e.target.dataset.titleFor) {
+      var mid = e.target.dataset.titleFor, title = e.target.value.trim();
+      store.setTitle(mid, title).then(function () {
+        state.members.forEach(function (m) { if (m.id === mid) m.title = title; });
+        toast("Job title saved");
+        if (state.view === "members") render();
+      }).catch(function (err) { toast("Not saved: " + err.message); });
+    }
     else if (e.target.id === "co-sector") { state.sector = e.target.value; renderCompanyRows(); }
     else if (e.target.id === "avatar-file") {
       var file = e.target.files && e.target.files[0];
@@ -1161,6 +1329,7 @@
       store.setRole(id, role).then(function () {
         state.members.forEach(function (m) { if (m.id === id) m.role = role; });
         toast("Role updated to " + roleLabel(role));
+        if (state.view === "members") render();
       }).catch(function (err) { toast("Could not update role: " + err.message); go("members"); });
     }
   });
@@ -1179,5 +1348,5 @@
     });
 
   // Exposed for automated tests.
-  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go };
+  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render };
 })();

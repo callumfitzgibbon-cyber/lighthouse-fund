@@ -8,6 +8,8 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 - **Trade**: search the stock list and buy or sell. Orders fill straight away at the latest delayed price.
 - **Companies**: every company in the feed, each linked to its profile on Market Index.
 - **History**: a permanent record of every trade, with who placed it and when, and an Excel download.
+- **Approval code**: analysts need the Fund Manager's six-digit code to place a trade. It changes every 5 minutes, only the Fund Manager can see it, and the database checks it.
+- **Charter**: new members must agree to the charter when they sign up, and the date is recorded.
 - **Profile**: each member can change their name, photo, email and password.
 - **Members**: the Fund Manager sets who can trade. Roles are Fund Manager, Analyst and Viewer (stored in the database as `admin`, `trader` and `viewer`).
 
@@ -46,7 +48,7 @@ Then open http://localhost:8000.
 
 ## Going live
 
-1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it, then do the same with `supabase/update-2026-11-12.sql`. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
+1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it, then do the same with `supabase/update-2026-11-12.sql` and `supabase/update-2026-11-13.sql`. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
 2. **First admin.** Create your account in the app, then run this in the Supabase SQL editor with your email:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';
