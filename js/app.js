@@ -452,7 +452,7 @@
     $("#banner").innerHTML = demoNote + (notes.length ? '<div class="banner"><div class="wrap">' + esc(notes.join(" ")) + "</div></div>" : "");
   }
 
-  function roleLabel(r) { return { viewer: "Viewer", trader: "Trader", admin: "Admin" }[r] || r; }
+  function roleLabel(r) { return { viewer: "Viewer", trader: "Analyst", admin: "Fund Manager" }[r] || r; }
 
   function pricesStamp() {
     if (state.pricesAreSample) return "Sample prices";
@@ -581,7 +581,7 @@
   function renderTrade() {
     if (!canTrade()) {
       $("#main").innerHTML = '<div class="page-head"><h1>Trade</h1></div><div class="card"><p>' +
-        (state.user ? "Your account can view the fund but cannot place trades. Ask the fund manager to make you a trader." : "Sign in with a trader account to place trades.") +
+        (state.user ? "Your account can view the fund but cannot place trades. Ask the fund manager to make you an analyst." : "Sign in with an analyst or fund manager account to place trades.") +
         "</p>" + (state.user ? "" : '<button type="button" class="btn" data-view="signin">Sign in</button>') + "</div>";
       return;
     }
@@ -724,21 +724,21 @@
     if (!isAdmin()) { state.view = "portfolio"; return render(); }
     var rows = state.members.map(function (m) {
       var me = m.id === state.user.id;
-      var opts = ["viewer", "trader", "admin"].map(function (r) { return '<option value="' + r + '"' + (m.role === r ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("");
+      var opts = ["admin", "trader", "viewer"].map(function (r) { return '<option value="' + r + '"' + (m.role === r ? " selected" : "") + ">" + roleLabel(r) + "</option>"; }).join("");
       return '<tr><td><span class="person">' + avatarHtml({ name: m.display_name || m.email, avatar: m.avatar_url }) + "<span><b>" + esc(m.display_name || "") + "</b>" + (me ? ' <span class="pill">You</span>' : "") + '<span class="muted small">' + esc(m.email || "") + "</span></span></span></td>" +
         '<td class="nowrap muted">' + esc(fmtDate(m.created_at)) + "</td>" +
-        '<td class="num">' + (me ? '<span class="pill ok">Admin</span>' : '<select class="role-select" data-member="' + esc(m.id) + '" aria-label="Role for ' + esc(m.email || "") + '">' + opts + "</select>") + "</td></tr>";
+        '<td class="num">' + (me ? '<span class="pill ok">Fund Manager</span>' : '<select class="role-select" data-member="' + esc(m.id) + '" aria-label="Role for ' + esc(m.email || "") + '">' + opts + "</select>") + "</td></tr>";
     }).join("");
     $("#main").innerHTML =
       '<div class="page-head"><div><h1>Members</h1><div class="muted small">Everyone who has created an account. New accounts start as viewers.</div></div></div>' +
       '<div class="cards three">' +
+        '<div class="card stat"><div class="eyebrow">Fund Manager</div><div class="stat-sub">Places trades and sets everyone\'s role.</div></div>' +
+        '<div class="card stat"><div class="eyebrow">Analyst</div><div class="stat-sub">Can place buy and sell orders.</div></div>' +
         '<div class="card stat"><div class="eyebrow">Viewer</div><div class="stat-sub">Can see the fund and its history.</div></div>' +
-        '<div class="card stat"><div class="eyebrow">Trader</div><div class="stat-sub">Can also place buy and sell orders.</div></div>' +
-        '<div class="card stat"><div class="eyebrow">Admin</div><div class="stat-sub">Can also change other people\'s roles.</div></div>' +
       "</div>" +
       '<div class="card flush"><div class="table-scroll"><table><thead><tr><th>Member</th><th>Joined</th><th class="num">Role</th></tr></thead><tbody>' +
       (rows || '<tr><td colspan="3" class="empty">No members yet.</td></tr>') + "</tbody></table></div></div>" +
-      '<p class="muted small" style="margin-top:12px">Your own role is locked so the fund can never be left without an admin. To hand over, make someone else an admin and ask them to change yours. Other people appear here once they create an account on the sign-in page.</p>';
+      '<p class="muted small" style="margin-top:12px">Your own role is locked so the fund can never be left without a fund manager. To hand over, make someone else a fund manager and ask them to change yours. Other people appear here once they create an account on the sign-in page.</p>';
   }
 
   function renderProfile() {
@@ -764,7 +764,7 @@
             '<div class="form-msg" id="password-msg"></div><button type="submit" class="btn secondary">Change password</button></form></div>' +
         "</div>" +
       "</div>" +
-      '<p class="muted small" style="margin-top:16px">Role: ' + esc(roleLabel(u.role)) + ". Only an admin can change roles.</p>";
+      '<p class="muted small" style="margin-top:16px">Role: ' + esc(roleLabel(u.role)) + ". Only a fund manager can change roles.</p>";
   }
 
   function renderSignin() {
@@ -789,7 +789,7 @@
         '<div class="auth-panel"><div class="auth-box">' +
           '<img class="auth-logo" src="img/logo-full.png" alt="The Lighthouse Fund, Macquarie University" width="230" height="202">' +
           "<h2>" + (signupMode ? "Create your account" : "Sign in") + "</h2>" +
-          '<p class="muted small">' + (signupMode ? "New accounts can view the fund. The fund manager can then make you a trader." : "Welcome back. Sign in to manage the fund.") + "</p>" +
+          '<p class="muted small">' + (signupMode ? "New accounts can view the fund. The fund manager can then make you an analyst." : "Welcome back. Sign in to manage the fund.") + "</p>" +
           form +
           '<p class="auth-back"><button type="button" class="link" data-view="portfolio">View the fund without signing in</button>' +
             (DEMO ? "" : ' <span aria-hidden="true">·</span> <button type="button" class="link" data-action="enter-demo">Try demo mode</button>') + "</p>" +

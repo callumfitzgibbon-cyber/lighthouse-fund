@@ -9,7 +9,7 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 - **Companies**: every company in the feed, each linked to its profile on Market Index.
 - **History**: a permanent record of every trade, with who placed it and when, and an Excel download.
 - **Profile**: each member can change their name, photo, email and password.
-- **Members**: the admin sets who can trade.
+- **Members**: the Fund Manager sets who can trade. Roles are Fund Manager, Analyst and Viewer (stored in the database as `admin`, `trader` and `viewer`).
 
 The app enforces the fund's rules on every order:
 
