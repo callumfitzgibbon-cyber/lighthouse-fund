@@ -268,6 +268,16 @@ body.auth-page main { max-width: none; padding: 0; min-height: 100vh; }
 .auth-back { margin: 10px 0 0; text-align: center; font-size: 13px; }
 .auth-back .link { color: var(--muted); font-weight: 500; }
 
+.modal { position: fixed; inset: 0; z-index: 40; background: rgba(22, 24, 29, 0.6); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-box { background: #fff; border-radius: 16px; padding: 24px; width: 100%; max-width: 340px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); }
+.modal-box h2 { font-size: 18px; margin-bottom: 4px; }
+.crop-stage { width: 260px; height: 260px; max-width: 100%; margin: 16px auto; border-radius: 50%; overflow: hidden; position: relative; background: #eef0f3; cursor: grab; touch-action: none; box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--crimson); }
+.crop-stage.dragging { cursor: grabbing; }
+.crop-stage img { position: absolute; left: 50%; top: 50%; max-width: none; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.crop-zoom { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.crop-zoom input { flex: 1; padding: 0; border: 0; accent-color: var(--crimson); box-shadow: none; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
   background: var(--ink); color: #fff; padding: 11px 18px; border-radius: 10px; font-size: 13.5px; font-weight: 500;

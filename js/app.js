@@ -750,9 +750,9 @@
         '<div class="card"><h2>Photo and name</h2>' +
           '<div class="photo-row">' + avatarHtml(u, "xl") +
             '<div><input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>' +
-            '<button type="button" class="btn secondary" data-action="pick-avatar">Upload a photo</button> ' +
+            '<button type="button" class="btn secondary" data-action="pick-avatar">' + (safeAvatar(u.avatar) ? "Change photo" : "Upload a photo") + '</button> ' +
             (safeAvatar(u.avatar) ? '<button type="button" class="btn quiet" data-action="remove-avatar">Remove</button>' : "") +
-            '<div class="muted small" style="margin-top:6px">A square JPG or PNG works best.</div></div></div>' +
+            '<div class="muted small" style="margin-top:6px">You can position and zoom it after choosing.</div></div></div>' +
           '<form id="name-form" novalidate><div class="field"><label for="p-name">Display name</label><input id="p-name" type="text" maxlength="60" autocomplete="name" value="' + esc(u.name) + '"></div>' +
           '<div class="form-msg" id="name-msg"></div><button type="submit" class="btn">Save name</button></form></div>' +
         '<div class="stack">' +
@@ -987,27 +987,92 @@
     }
   }
 
-  // Shrinks a chosen photo to a small square so it can be stored with the profile.
-  function resizeImage(file) {
-    return new Promise(function (resolve, reject) {
-      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return reject(new Error("Choose a JPG, PNG or WebP image."));
-      if (file.size > 15 * 1024 * 1024) return reject(new Error("That image is too large. Choose one under 15 MB."));
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-      img.onload = function () {
-        var size = 160, side = Math.min(img.naturalWidth, img.naturalHeight);
-        var canvas = document.createElement("canvas");
-        canvas.width = canvas.height = size;
-        var ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, size, size);
-        ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, size, size);
-        URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
-      };
-      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("That file could not be read as an image.")); };
-      img.src = url;
-    });
+  // Photo cropper: the member drags the photo and zooms it inside a circle, then it is saved as a small square.
+  var CROP_VIEW = 260, CROP_OUT = 160;
+  var crop = null;
+
+  function openCropper(file) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return toast("Choose a JPG, PNG or WebP image.");
+    if (file.size > 15 * 1024 * 1024) return toast("That image is too large. Choose one under 15 MB.");
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      closeCropper();
+      var base = CROP_VIEW / Math.min(img.naturalWidth, img.naturalHeight);
+      crop = { img: img, url: url, w: img.naturalWidth, h: img.naturalHeight, base: base, zoom: 1, x: 0, y: 0, drag: null };
+      var el = document.createElement("div");
+      el.className = "modal";
+      el.id = "crop-modal";
+      el.innerHTML =
+        '<div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="crop-title">' +
+          '<h2 id="crop-title">Position your photo</h2>' +
+          '<p class="muted small">Drag the photo to move it. Use the slider to zoom.</p>' +
+          '<div class="crop-stage" id="crop-stage"><img id="crop-img" alt="" draggable="false"></div>' +
+          '<div class="crop-zoom"><span class="small muted">Smaller</span><input id="crop-zoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom"><span class="small muted">Bigger</span></div>' +
+          '<div class="modal-actions"><button type="button" class="btn secondary" data-action="crop-cancel">Cancel</button><button type="button" class="btn" data-action="crop-save">Save photo</button></div>' +
+        "</div>";
+      document.body.appendChild(el);
+      $("#crop-img").src = url;
+      var stage = $("#crop-stage");
+      stage.addEventListener("pointerdown", function (e) {
+        crop.drag = { px: e.clientX, py: e.clientY, x: crop.x, y: crop.y };
+        stage.setPointerCapture(e.pointerId);
+        stage.classList.add("dragging");
+      });
+      stage.addEventListener("pointermove", function (e) {
+        if (!crop || !crop.drag) return;
+        crop.x = crop.drag.x + e.clientX - crop.drag.px;
+        crop.y = crop.drag.y + e.clientY - crop.drag.py;
+        drawCrop();
+      });
+      var stop = function () { if (crop) crop.drag = null; stage.classList.remove("dragging"); };
+      stage.addEventListener("pointerup", stop);
+      stage.addEventListener("pointercancel", stop);
+      stage.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        crop.zoom = Math.min(4, Math.max(1, crop.zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+        $("#crop-zoom").value = crop.zoom;
+        drawCrop();
+      }, { passive: false });
+      drawCrop();
+      $("#crop-zoom").focus();
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); toast("That file could not be read as an image."); };
+    img.src = url;
+  }
+
+  // Keeps the photo covering the whole circle, then positions it.
+  function drawCrop() {
+    var scale = crop.base * crop.zoom;
+    var maxX = Math.max(0, (crop.w * scale - CROP_VIEW) / 2), maxY = Math.max(0, (crop.h * scale - CROP_VIEW) / 2);
+    crop.x = Math.min(maxX, Math.max(-maxX, crop.x));
+    crop.y = Math.min(maxY, Math.max(-maxY, crop.y));
+    var el = $("#crop-img");
+    el.style.width = crop.w * scale + "px";
+    el.style.height = crop.h * scale + "px";
+    el.style.transform = "translate(calc(-50% + " + crop.x + "px), calc(-50% + " + crop.y + "px))";
+  }
+
+  function croppedDataUrl() {
+    var k = CROP_OUT / CROP_VIEW, scale = crop.base * crop.zoom * k;
+    var canvas = document.createElement("canvas");
+    canvas.width = canvas.height = CROP_OUT;
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, CROP_OUT, CROP_OUT);
+    ctx.imageSmoothingQuality = "high";
+    var dw = crop.w * scale, dh = crop.h * scale;
+    ctx.drawImage(crop.img, CROP_OUT / 2 + crop.x * k - dw / 2, CROP_OUT / 2 + crop.y * k - dh / 2, dw, dh);
+    return canvas.toDataURL("image/jpeg", 0.88);
+  }
+
+  function closeCropper() {
+    var el = $("#crop-modal");
+    if (el) el.remove();
+    if (crop) URL.revokeObjectURL(crop.url);
+    crop = null;
+    var input = $("#avatar-file");
+    if (input) input.value = "";
   }
 
   function saveAvatar(dataUrl) {
@@ -1045,6 +1110,8 @@
     else if (a === "signout") store.signOut().then(function () { state.user = null; state.view = "portfolio"; render(); });
     else if (a === "pick-avatar") $("#avatar-file").click();
     else if (a === "remove-avatar") saveAvatar(null);
+    else if (a === "crop-cancel") closeCropper();
+    else if (a === "crop-save") { var dataUrl = croppedDataUrl(); closeCropper(); saveAvatar(dataUrl); }
     else if (a === "enter-demo") setDemo(true);
     else if (a === "seed-demo") {
       if (window.confirm("Replace the demo trades with a sample portfolio?")) { demoStore.seed(); state.order.code = null; refreshAll().then(function () { go("portfolio"); toast("Sample portfolio loaded"); }); }
@@ -1068,6 +1135,7 @@
   }
 
   document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && crop) return closeCropper();
     if (e.key !== "Enter") return;
     var row = e.target.closest && e.target.closest("tr[data-code]");
     if (row) selectStock(row.dataset.code);
@@ -1075,7 +1143,8 @@
 
   document.addEventListener("input", function (e) {
     var id = e.target.id;
-    if (id === "search") { state.search = e.target.value; $("#universe").innerHTML = universeRows(); }
+    if (id === "crop-zoom") { crop.zoom = Number(e.target.value); drawCrop(); }
+    else if (id === "search") { state.search = e.target.value; $("#universe").innerHTML = universeRows(); }
     else if (id === "co-search") { state.coSearch = e.target.value; renderCompanyRows(); }
     else if (id === "qty") { state.order.qty = e.target.value; renderCalc(); }
     else if (id === "note") { state.order.note = e.target.value; }
@@ -1086,7 +1155,7 @@
     else if (e.target.id === "co-sector") { state.sector = e.target.value; renderCompanyRows(); }
     else if (e.target.id === "avatar-file") {
       var file = e.target.files && e.target.files[0];
-      if (file) resizeImage(file).then(saveAvatar).catch(function (err) { toast(err.message); });
+      if (file) openCropper(file);
     } else if (e.target.dataset.member) {
       var id = e.target.dataset.member, role = e.target.value;
       store.setRole(id, role).then(function () {
