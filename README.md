@@ -6,18 +6,20 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 
 - **Portfolio**: fund value, return since inception, holdings, allocation and mandate checks.
 - **Trade**: search the stock list and buy or sell. Orders fill straight away at the latest delayed price.
-- **History**: a permanent record of every trade, with CSV download.
+- **Companies**: every company in the feed, each linked to its profile on Market Index.
+- **History**: a permanent record of every trade, with who placed it and when, and an Excel download.
+- **Profile**: each member can change their name, photo, email and password.
 - **Members**: the admin sets who can trade.
 
 The app enforces the fund's rules on every order:
 
 | Rule | Setting |
 | --- | --- |
-| Brokerage | A$10 or 0.10% of the trade, whichever is higher |
+| Brokerage | None. Trades are free (`BROKERAGE_FLAT` and `BROKERAGE_RATE` in `js/config.js`, and `check_trade` in the database) |
 | Single stock limit | 15% of the fund |
-| Index ETF floor | A$40,000 in VAS |
+| Index ETF floor | Off (set `MIN_ETF_VALUE` in `js/config.js` to turn it on) |
 | Active sleeve cap | A$30,000 |
-| Excluded stocks | Flagged in the price feed (top 10 companies and any manual exclusions) |
+| Excluded stocks | Off, so the ten largest companies can be traded (set `ENFORCE_EXCLUSIONS` to `true` in `js/config.js` to block stocks flagged in the feed) |
 
 Settings live in `js/config.js`.
 
@@ -44,7 +46,7 @@ Then open http://localhost:8000.
 
 ## Going live
 
-1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
+1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it, then do the same with `supabase/update-2026-11-12.sql`. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
 2. **First admin.** Create your account in the app, then run this in the Supabase SQL editor with your email:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';

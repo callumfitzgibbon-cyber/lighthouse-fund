@@ -12,10 +12,12 @@ window.LIGHTHOUSE_CONFIG = {
   STARTING_CAPITAL: 100000,
   INCEPTION_DATE: "2027-07-01",
   ETF_CODE: "VAS",
-  BROKERAGE_FLAT: 10,
-  BROKERAGE_RATE: 0.001,
+  BROKERAGE_FLAT: 0, // trades are free. Set to 10 and 0.001 to charge brokerage again
+  BROKERAGE_RATE: 0, // (the database function check_trade must be changed to match)
+  ENFORCE_EXCLUSIONS: false, // true blocks stocks flagged "excluded" in the feed (the ten largest)
+  COMPANY_INFO_URL: "https://www.marketindex.com.au/asx/{code}", // {code} is replaced in lower case
   MAX_STOCK_WEIGHT: 0.15,
-  MIN_ETF_VALUE: 40000,
+  MIN_ETF_VALUE: 0, // set to 40000 to bring back the index ETF floor
   ACTIVE_SLEEVE_CAP: 30000,
   PRICE_REFRESH_SECONDS: 120
 };
