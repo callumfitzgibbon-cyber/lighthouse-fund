@@ -674,7 +674,7 @@
       acc += share;
       return el;
     }).join("");
-    return '<svg class="donut" viewBox="0 0 42 42" role="img" aria-label="Allocation of the fund"><circle cx="21" cy="21" r="15.915" fill="none" stroke="#eceef1" stroke-width="5"/>' + rings + "</svg>";
+    return '<svg class="donut" viewBox="0 0 42 42" role="img" aria-label="Allocation of the fund"><circle cx="21" cy="21" r="15.915" fill="none" stroke="#2a2d34" stroke-width="5"/>' + rings + "</svg>";
   }
 
   function renderPortfolio() {
@@ -940,7 +940,7 @@
         '<span class="chart-gap">' + (Math.abs(diff) < 0.00005 ? "Level with the index" : fmtPct(Math.abs(diff)) + (diff > 0 ? " ahead of" : " behind") + " the index") + " since " + esc(new Date(first.day + "T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" })) + "</span></div>" +
         '<div id="perf-chart"></div>';
     } else {
-      body = '<div class="chart-empty"><svg viewBox="0 0 240 70" width="240" height="70" aria-hidden="true"><path d="M4 58 C40 50 60 54 92 40 S150 34 178 20 S220 16 236 8" fill="none" stroke="#d5d8de" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round"/></svg>' +
+      body = '<div class="chart-empty"><svg viewBox="0 0 240 70" width="240" height="70" aria-hidden="true"><path d="M4 58 C40 50 60 54 92 40 S150 34 178 20 S220 16 236 8" fill="none" stroke="#3a3e47" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round"/></svg>' +
         "<p><strong>The chart starts soon.</strong><br>The fund's value is saved at the end of each trading day. Once there are two days on record, this shows the fund against the ASX 300 index ETF.</p></div>";
     }
     return '<div class="card">' + (bare ? "" : '<div class="card-title-row"><h2>Performance</h2><span class="muted small">' +
@@ -1106,6 +1106,30 @@
         (state.busy ? "Placing order…" : (n.pending ? "Place limit order: " : "") + (o.side === "buy" ? (n.pending ? "buy " : "Buy ") : (n.pending ? "sell " : "Sell ")) + (qty > 0 ? fmtQty(qty) + " " : "") + esc(info.code)) + "</button>";
   }
 
+  // One tile per sector: how many companies, how the sector moved today, and what the fund holds in it.
+  function sectorTilesHtml() {
+    var groups = {}, held = {};
+    computePortfolio(state.trades).positions.forEach(function (h) { held[h.code] = true; });
+    state.priceList.forEach(function (p) {
+      if (!p.sector) return;
+      var g = groups[p.sector] || (groups[p.sector] = { name: p.sector, n: 0, priced: 0, sum: 0, up: 0, down: 0, held: [] });
+      g.n++;
+      if (p.price > 0) { g.priced++; g.sum += p.change_pct; if (p.change_pct > 0) g.up++; else if (p.change_pct < 0) g.down++; }
+      if (held[p.code]) g.held.push(p.code);
+    });
+    var list = Object.keys(groups).sort().map(function (k) { return groups[k]; });
+    if (!list.length) return "";
+    var all = '<button type="button" class="sector-tile all' + (!state.sector ? " on" : "") + '" data-sector="*" aria-pressed="' + (!state.sector) + '">' +
+      '<span class="sector-name">All sectors</span><span class="sector-meta">' + state.priceList.length + " companies in " + list.length + " sectors</span></button>";
+    return '<div class="section-head sector-head"><h2>Sectors</h2><p class="muted small">Pick a sector to see only its companies.</p></div><div class="sector-grid">' + all + list.map(function (g) {
+      var avg = g.priced ? g.sum / g.priced : 0, moved = g.up + g.down;
+      return '<button type="button" class="sector-tile' + (state.sector === g.name ? " on" : "") + '" data-sector="' + esc(g.name) + '" aria-pressed="' + (state.sector === g.name) + '">' +
+        '<span class="sector-top"><span class="sector-name">' + esc(g.name) + '</span><span class="chg ' + signClass(avg) + '">' + fmtChange(avg) + "</span></span>" +
+        '<span class="sector-meta">' + g.n + (g.n === 1 ? " company" : " companies") + (g.held.length ? ' · <b class="sector-held">Fund holds ' + esc(g.held.join(", ")) + "</b>" : "") + "</span>" +
+        '<span class="sector-bar" title="' + g.up + " rising, " + g.down + ' falling today">' + (moved ? '<i class="breadth-up" style="width:' + (g.up / moved * 100).toFixed(1) + '%"></i><i class="breadth-down"></i>' : "") + "</span></button>";
+    }).join("") + "</div>";
+  }
+
   function renderCompanies() {
     var sectors = {};
     state.priceList.forEach(function (p) { if (p.sector) sectors[p.sector] = true; });
@@ -1120,7 +1144,8 @@
         ["Companies", String(priced.length)], ["Rising today", String(rising), "up"], ["Falling today", String(falling), "down"],
         ["Biggest mover", top ? esc(top.code) + " " + (top.change_pct > 0 ? "+" : "") + top.change_pct.toFixed(1) + "%" : "None", top ? signClass(top.change_pct) : ""]]) +
       (rising + falling > 0 ? '<div class="breadth" title="Share of companies rising and falling today"><span class="breadth-up" style="width:' + (rising / (rising + falling) * 100).toFixed(1) + '%"></span><span class="breadth-down"></span></div>' : "") +
-      '<div class="card flush"><div class="card-pad filters">' +
+      '<div id="sector-tiles">' + sectorTilesHtml() + "</div>" +
+      '<div class="card flush" id="co-table"><div class="card-pad filters">' +
         '<label class="sr-only" for="co-search">Search companies</label><input id="co-search" type="search" placeholder="Search by code or company" value="' + esc(state.coSearch) + '" autocomplete="off">' +
         '<label class="sr-only" for="co-sector">Sector</label><select id="co-sector">' + sectorOpts + "</select>" +
         '<span class="muted small" id="co-count"></span></div>' +
@@ -1135,7 +1160,7 @@
     var list = state.priceList.filter(function (p) {
       return (!state.sector || p.sector === state.sector) && (!q || p.code.toLowerCase().indexOf(q) >= 0 || p.name.toLowerCase().indexOf(q) >= 0);
     });
-    $("#co-count").textContent = list.length + (list.length === 1 ? " company" : " companies");
+    $("#co-count").textContent = list.length + (list.length === 1 ? " company" : " companies") + (state.sector ? " in " + state.sector : "");
     var heldNow = {};
     computePortfolio(state.trades).positions.forEach(function (h) { heldNow[h.code] = true; });
     body.innerHTML = list.map(function (p) {
@@ -1390,7 +1415,7 @@
           '<ul class="auth-points"><li>' + ICON.ok + "Simulated " + fmtMoney(CFG.STARTING_CAPITAL).replace(/\.00$/, "") + " portfolio</li><li>" + ICON.ok + "Every trade on a permanent record</li><li>" + ICON.ok + "Benchmarked against the ASX 300</li></ul>" +
         "</div></div>" +
         '<div class="auth-panel"><div class="auth-box">' +
-          '<img class="auth-logo" src="img/logo-full.png" alt="The Lighthouse Fund, Macquarie University" width="230" height="202">' +
+          '<img class="auth-logo" src="img/logo-full-dark.png" alt="The Lighthouse Fund, Macquarie University" width="230" height="202">' +
           "<h2>" + (signupMode ? "Create your account" : "Sign in") + "</h2>" +
           '<p class="muted small">' + (signupMode ? "New accounts can view the fund. The fund manager can then make you an analyst." : "Welcome back. Sign in to manage the fund.") + "</p>" +
           form +
@@ -1457,6 +1482,7 @@
         renderOpenOrders();
       } else if (state.view === "companies" && $("#companies")) {
         renderChrome();
+        $("#sector-tiles").innerHTML = sectorTilesHtml();
         renderCompanyRows();
       } else if ((state.view === "profile" && $("#name-form")) || (state.view === "signin" && $("#auth-form"))) {
         renderChrome();
@@ -1821,7 +1847,7 @@
 
   // ---------- events ----------
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist]");
+    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector]");
     if (!t) return;
     if (t.dataset.view) { e.preventDefault(); return go(t.dataset.view); }
     if (t.dataset.side) {
@@ -1831,6 +1857,12 @@
         if (!heldNow) { state.order.code = null; clearTicket(); }
       }
       return renderTrade();
+    }
+    if (t.dataset.sector) {
+      state.sector = t.dataset.sector === "*" || state.sector === t.dataset.sector ? "" : t.dataset.sector;
+      $("#sector-tiles").innerHTML = sectorTilesHtml();
+      if ($("#co-sector")) $("#co-sector").value = state.sector;
+      return renderCompanyRows();
     }
     if (t.dataset.hist) { state.histFilter = t.dataset.hist; return renderHistory(); }
     if (t.dataset.qtymode) { state.order.qtyMode = t.dataset.qtymode; renderTicket(); var f1 = $(state.order.qtyMode === "amount" ? "#amount" : "#qty"); if (f1) f1.focus(); return; }
@@ -1938,7 +1970,7 @@
         if (state.view === "members") render();
       }).catch(function (err) { toast("Not saved: " + err.message); });
     }
-    else if (e.target.id === "co-sector") { state.sector = e.target.value; renderCompanyRows(); }
+    else if (e.target.id === "co-sector") { state.sector = e.target.value; $("#sector-tiles").innerHTML = sectorTilesHtml(); renderCompanyRows(); }
     else if (e.target.id === "avatar-file") {
       var file = e.target.files && e.target.files[0];
       if (file) openCropper(file);

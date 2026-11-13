@@ -4,8 +4,8 @@
   "use strict";
   var NS = "http://www.w3.org/2000/svg";
   var SERIES = [
-    { key: "fund", name: "Lighthouse Fund", color: "#9e1b32" },
-    { key: "bench", name: "ASX 300 index ETF", color: "#2f6fbf" }
+    { key: "fund", name: "Lighthouse Fund", color: "#f0526b" },
+    { key: "bench", name: "ASX 300 index ETF", color: "#5aa2f5" }
   ];
 
   function el(name, attrs, parent) {
@@ -58,12 +58,12 @@
       var d = points.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p[s.key]).toFixed(1); }).join(" ");
       el("path", { d: d, class: "chart-line", pathLength: 1, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
       var last = points.length - 1;
-      el("circle", { cx: x(last), cy: y(points[last][s.key]), r: 4, class: "chart-end", fill: s.color, stroke: "#fff", "stroke-width": 2 }, svg);
+      el("circle", { cx: x(last), cy: y(points[last][s.key]), r: 4, class: "chart-end", fill: s.color, stroke: "#0d0e11", "stroke-width": 2 }, svg);
     });
 
     // Hover: a hairline snaps to the nearest day and one tooltip lists both series.
     var hair = el("line", { y1: m.top, y2: m.top + ih, class: "chart-hair", visibility: "hidden" }, svg);
-    var dots = SERIES.map(function (s) { return el("circle", { r: 4.5, fill: s.color, stroke: "#fff", "stroke-width": 2, visibility: "hidden" }, svg); });
+    var dots = SERIES.map(function (s) { return el("circle", { r: 4.5, fill: s.color, stroke: "#0d0e11", "stroke-width": 2, visibility: "hidden" }, svg); });
     var tip = document.createElement("div");
     tip.className = "chart-tip";
     tip.hidden = true;
