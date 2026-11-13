@@ -654,3 +654,4 @@ body { background: transparent; position: relative; }
 @keyframes grid-slide { to { background-position: 56px 56px; } }
 .foot { background: rgba(15, 18, 23, 0.82); }
 @media (prefers-reduced-motion: reduce) { .bg-fx i { animation: none; } }
+.bg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
