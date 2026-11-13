@@ -556,3 +556,44 @@ h1 { letter-spacing: -0.015em; }
   .home-hero::before, .hero::before, .auth-art::before, .ticker-track { animation: none; }
   .pillar, .holding, .btn { transition: none; }
 }
+
+/* ---------- page band ---------- */
+.band { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: center; background: linear-gradient(120deg, #16181d 0%, #2b2f36 60%, #4a1c28 100%); color: #fff; border-radius: 16px; padding: 30px 34px; margin-bottom: 18px; position: relative; overflow: hidden; }
+.band::before { content: ""; position: absolute; left: 80%; top: 50%; width: 1500px; height: 1500px; margin: -750px 0 0 -750px; pointer-events: none; opacity: 0.6;
+  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.12) 12deg, rgba(255, 255, 255, 0) 30deg, rgba(255, 255, 255, 0) 360deg); animation: beam 26s linear infinite; }
+.band > * { position: relative; z-index: 1; min-width: 0; }
+.band:has(.band-avatar) { grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; }
+.band h1 { font-size: 32px; margin: 8px 0 8px; color: #fff; letter-spacing: -0.02em; }
+.band p { margin: 0; color: rgba(255, 255, 255, 0.72); font-size: 14.500px; line-height: 1.55; max-width: 560px; }
+.band-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.band-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.band-stats:empty { display: none; }
+.band-stat { background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; padding: 14px 14px 13px; min-width: 0; }
+.band-stat .eyebrow { font-size: 10.500px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.band-stat-value { font-size: 19px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.band-stat-value.up { color: #5fe0a0; }
+.band-stat-value.down { color: #ff8f86; }
+.band-avatar.avatar { width: 84px; height: 84px; font-size: 30px; border: 3px solid rgba(255, 255, 255, 0.25); flex: none; }
+.band .band-stats:has(> :nth-child(2):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .band { grid-template-columns: minmax(0, 1fr); gap: 20px; } .band:has(.band-avatar) { grid-template-columns: auto minmax(0, 1fr); } .band:has(.band-avatar) .band-stats { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .band { padding: 22px 20px; } .band h1 { font-size: 26px; } .band-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .band::before { animation: none; } }
+
+/* ---------- company monograms, change pills, chips ---------- */
+.co { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.co > span:last-child, .co > a { min-width: 0; }
+.mono { width: 36px; height: 36px; border-radius: 10px; background: #eef0f3; color: #4b525d; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.mono.held { background: #fbeef0; color: var(--crimson); }
+.chg { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 12.500px; background: #eef0f3; color: #4b525d; font-variant-numeric: tabular-nums; }
+.chg.up { background: var(--good-soft); color: var(--good); }
+.chg.down { background: var(--bad-soft); color: var(--bad); }
+.breadth { display: flex; height: 6px; border-radius: 4px; overflow: hidden; gap: 2px; margin: -6px 0 18px; }
+.breadth-up { background: var(--good); border-radius: 4px; }
+.breadth-down { flex: 1; background: var(--bad); border-radius: 4px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-strong); background: #fff; color: var(--charcoal); cursor: pointer; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+.chip:hover { border-color: #b9bec7; }
+.chip.on { background: #16181d; border-color: #16181d; color: #fff; }
+tbody tr { transition: background 0.12s ease; }
+tbody tr:hover { background: #fafbfc; }
+main.wrap { padding-top: 22px; padding-bottom: 48px; }

@@ -693,7 +693,7 @@
     var rows = pf.positions.map(function (p) {
       var over = false; // the limit applies to buying, so a holding that has grown past it is fine
       return "<tr>" +
-        '<td><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a><div class="muted small">' + esc(p.name) + "</div></td>" +
+        '<td><span class="co">' + monoHtml(p.code, true) + '<span><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a><div class="muted small">' + esc(p.name) + "</div></span></span></td>" +
         "<td>" + esc(sleeveLabel(p.sleeve)) + "</td>" +
         '<td class="num">' + fmtQty(p.qty) + "</td>" +
         '<td class="num">' + (p.priced ? fmtMoney(p.price) : "No price") + "</td>" +
@@ -756,6 +756,22 @@
         "</div>" +
       "</div>";
     drawPerformance(perf);
+  }
+
+  // ---------- page band ----------
+  // The dark strip at the top of each page: a title, a line of explanation and a few key numbers.
+  function bandHtml(eyebrow, title, sub, stats, actions, lead) {
+    return '<section class="band">' + (lead || "") +
+      '<div class="band-text"><div class="eyebrow light">' + esc(eyebrow) + "</div><h1>" + esc(title) + "</h1>" + (sub ? "<p>" + sub + "</p>" : "") +
+      (actions ? '<div class="band-actions">' + actions + "</div>" : "") + "</div>" +
+      '<div class="band-stats">' + (stats || []).map(function (st) {
+        return '<div class="band-stat"><div class="eyebrow light">' + esc(st[0]) + '</div><div class="band-stat-value ' + (st[2] || "") + '">' + st[1] + "</div></div>";
+      }).join("") + "</div></section>";
+  }
+  function whole(n) { return "$" + Math.round(isFinite(n) ? n : 0).toLocaleString("en-AU"); }
+  // A small square with the stock code's first letters, in front of a company name.
+  function monoHtml(code, held) {
+    return '<span class="mono' + (held ? " held" : "") + '" aria-hidden="true">' + esc(String(code || "").slice(0, 2)) + "</span>";
   }
 
   // ---------- small visuals ----------
@@ -957,7 +973,7 @@
         : isExcluded(p) ? '<span class="pill bad">' + esc(p.excluded) + "</span>"
         : held[p.code] ? '<span class="pill ok">Held</span>' : "";
       return '<tr class="clickable' + (state.order.code === p.code ? " selected" : "") + '" data-code="' + esc(p.code) + '" tabindex="0">' +
-        '<td><span class="code">' + esc(p.code) + '</span><div class="muted small">' + esc(p.name) + "</div></td>" +
+        '<td><span class="co">' + monoHtml(p.code, !!held[p.code]) + '<span><span class="code">' + esc(p.code) + '</span><div class="muted small">' + esc(p.name) + "</div></span></span></td>" +
         '<td class="hide-sm">' + esc(p.sector) + "</td>" +
         '<td class="num">' + (p.price > 0 ? fmtMoney(p.price) : "No price") + '<div class="small ' + signClass(p.change_pct) + '">' + fmtChange(p.change_pct) + "</div></td>" +
         '<td class="num">' + tag + "</td></tr>";
@@ -966,14 +982,17 @@
 
   function renderTrade() {
     if (!canTrade()) {
-      $("#main").innerHTML = '<div class="page-head"><h1>Trade</h1></div><div class="card"><p>' +
+      $("#main").innerHTML = bandHtml("Order desk", "Trade", "Only analysts and fund managers can place orders.", []) + '<div class="card"><p>' +
         (state.user ? "Your account can view the fund but cannot place trades. Ask the fund manager to make you an analyst." : "Sign in with an analyst or fund manager account to place trades.") +
         "</p>" + (state.user ? "" : '<button type="button" class="btn" data-view="signin">Sign in</button>') + "</div>";
       return;
     }
     var free = brokerageFor(1000) === 0;
+    var tradePf = computePortfolio(state.trades);
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>Trade</h1><div class="muted small">' + pricesStamp() + ". Market orders fill straight away at the price shown" + (free ? ", with no brokerage" : "") + ".</div></div></div>" +
+      bandHtml("Order desk", "Trade", esc(pricesStamp()) + ". Market orders fill straight away at the price shown" + (free ? ", with no brokerage" : "") + ".", [
+        ["Cash available", whole(tradePf.cash)], ["Fund value", whole(tradePf.total)],
+        ["Open orders", String(state.orders.length)], ["Market", marketOpen() ? "Open" : "Closed", marketOpen() ? "up" : ""]]) +
       '<div class="grid-trade">' +
         '<div class="card flush"><div class="card-pad">' +
           '<div class="seg" role="group" aria-label="Buy or sell">' +
@@ -1093,8 +1112,14 @@
     var sectorOpts = '<option value="">All sectors</option>' + Object.keys(sectors).sort().map(function (s) {
       return '<option value="' + esc(s) + '"' + (state.sector === s ? " selected" : "") + ">" + esc(s) + "</option>";
     }).join("");
+    var priced = state.priceList.filter(function (p) { return p.price > 0; });
+    var rising = priced.filter(function (p) { return p.change_pct > 0; }).length, falling = priced.filter(function (p) { return p.change_pct < 0; }).length;
+    var top = priced.slice().sort(function (a, b) { return Math.abs(b.change_pct) - Math.abs(a.change_pct); })[0];
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>Companies</h1><div class="muted small">Every company the fund can buy. Click a company to open its full profile on Market Index in a new tab.</div></div></div>' +
+      bandHtml("The universe", "Companies", "Every company the fund can buy. Click one to open its full profile on Market Index in a new tab.", [
+        ["Companies", String(priced.length)], ["Rising today", String(rising), "up"], ["Falling today", String(falling), "down"],
+        ["Biggest mover", top ? esc(top.code) + " " + (top.change_pct > 0 ? "+" : "") + top.change_pct.toFixed(1) + "%" : "None", top ? signClass(top.change_pct) : ""]]) +
+      (rising + falling > 0 ? '<div class="breadth" title="Share of companies rising and falling today"><span class="breadth-up" style="width:' + (rising / (rising + falling) * 100).toFixed(1) + '%"></span><span class="breadth-down"></span></div>' : "") +
       '<div class="card flush"><div class="card-pad filters">' +
         '<label class="sr-only" for="co-search">Search companies</label><input id="co-search" type="search" placeholder="Search by code or company" value="' + esc(state.coSearch) + '" autocomplete="off">' +
         '<label class="sr-only" for="co-sector">Sector</label><select id="co-sector">' + sectorOpts + "</select>" +
@@ -1111,12 +1136,14 @@
       return (!state.sector || p.sector === state.sector) && (!q || p.code.toLowerCase().indexOf(q) >= 0 || p.name.toLowerCase().indexOf(q) >= 0);
     });
     $("#co-count").textContent = list.length + (list.length === 1 ? " company" : " companies");
+    var heldNow = {};
+    computePortfolio(state.trades).positions.forEach(function (h) { heldNow[h.code] = true; });
     body.innerHTML = list.map(function (p) {
       return "<tr>" +
-        '<td><a class="co-link" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer"><span class="code">' + esc(p.code) + '</span><span class="muted small">' + esc(p.name) + "</span></a></td>" +
-        "<td>" + esc(p.sector) + "</td>" +
+        '<td><span class="co">' + monoHtml(p.code, !!heldNow[p.code]) + '<a class="co-link" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer"><span class="code">' + esc(p.code) + '</span><span class="muted small">' + esc(p.name) + "</span></a></span></td>" +
+        '<td><span class="pill">' + esc(p.sector) + "</span></td>" +
         '<td class="num">' + (p.price > 0 ? fmtMoney(p.price) : "No price") + "</td>" +
-        '<td class="num ' + signClass(p.change_pct) + '">' + fmtChange(p.change_pct) + "</td>" +
+        '<td class="num"><span class="chg ' + signClass(p.change_pct) + '">' + fmtChange(p.change_pct) + "</span></td>" +
         '<td class="num">' + fmtCap(p.market_cap) + "</td>" +
         '<td class="num"><div class="row-links"><a href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Info' + ICON.ext + "</a>" +
           '<a href="' + bookUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Order book' + ICON.ext + "</a>" +
@@ -1210,7 +1237,12 @@
   function renderHistory() {
     var showBrokerage = state.trades.some(function (t) { return t.brokerage > 0; });
     var showNote = state.trades.some(function (t) { return t.note && t.type !== "deposit"; });
-    var rows = state.trades.slice().reverse().map(function (t) {
+    var hf = state.histFilter || "all", hs = { count: 0, bought: 0, sold: 0, dividends: 0 };
+    state.trades.forEach(function (t) {
+      var v = (t.quantity || 0) * (t.price || 0);
+      if (t.type === "buy") { hs.count++; hs.bought += v; } else if (t.type === "sell") { hs.count++; hs.sold += v; } else if (t.type === "dividend") hs.dividends += t.cash_amount || 0;
+    });
+    var rows = state.trades.slice().reverse().filter(function (t) { return hf === "all" || t.type === hf; }).map(function (t) {
       var value = (t.quantity || 0) * (t.price || 0);
       var cashEffect = t.type === "buy" ? -(value + (t.brokerage || 0)) : t.type === "sell" ? value - (t.brokerage || 0) : (t.cash_amount || 0);
       var pillClass = t.type === "buy" ? "buy" : t.type === "sell" ? "sell" : "";
@@ -1228,11 +1260,15 @@
         (showNote ? "<td>" + esc(t.note || "") + "</td>" : "") + "</tr>";
     }).join("");
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>History</h1><div class="muted small">Every trade the fund has made, newest first, with who placed it and when (Sydney time). Entries cannot be edited or deleted.</div></div>' +
-      '<div class="head-actions">' + (isAdmin() ? '<button type="button" class="btn secondary" data-action="dividend-open">Record dividend</button>' : "") +
-      '<button type="button" class="btn" data-action="export">' + ICON.down + "Download Excel</button></div></div>" +
+      bandHtml("The record", "History", "Every trade the fund has made, newest first, with who placed it and when (Sydney time). Entries cannot be edited or deleted.", [
+        ["Trades", String(hs.count)], ["Bought", whole(hs.bought)], ["Sold", whole(hs.sold)], ["Dividends", whole(hs.dividends)]],
+        (isAdmin() ? '<button type="button" class="btn ghost" data-action="dividend-open">Record dividend</button>' : "") +
+        '<button type="button" class="btn" data-action="export">' + ICON.down + "Download Excel</button>") +
+      '<div class="chips" role="group" aria-label="Show">' + [["all", "All"], ["buy", "Buys"], ["sell", "Sells"], ["dividend", "Dividends"]].map(function (f) {
+        return '<button type="button" class="chip' + (hf === f[0] ? " on" : "") + '" data-hist="' + f[0] + '">' + f[1] + "</button>";
+      }).join("") + "</div>" +
       '<div class="card flush"><div class="table-scroll"><table><thead><tr><th class="num">No.</th><th>When</th><th>Type</th><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th>' + (showBrokerage ? '<th class="num">Brokerage</th>' : "") + '<th class="num">Cash effect</th><th>By</th>' + (showNote ? "<th>Note</th>" : "") + '</tr></thead><tbody>' +
-      (rows || '<tr><td colspan="11" class="empty">No trades yet.</td></tr>') + "</tbody></table></div></div>" +
+      (rows || '<tr><td colspan="11" class="empty">' + (hf === "all" ? "No trades yet." : "Nothing of that kind on the record yet.") + "</td></tr>") + "</tbody></table></div></div>" +
       "";
   }
 
@@ -1289,7 +1325,11 @@
         '<td class="num">' + (me ? '<span class="pill ok">Fund Manager</span>' : '<span class="row-links"><select class="role-select" data-member="' + esc(m.id) + '" aria-label="Role for ' + esc(m.email || "") + '">' + opts + '</select><button type="button" class="btn quiet danger small-btn" data-remove-member="' + esc(m.id) + '">Remove</button></span>') + "</td></tr>";
     }).join("");
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>Members</h1><div class="muted small">Everyone who has created an account. New accounts start as viewers. Only fund managers can see this page.</div></div></div>' +
+      bandHtml("The team", "Members", "Everyone who has created an account. New accounts start as viewers. Only fund managers can see this page.", [
+        ["Members", String(state.members.length)],
+        ["Analysts", String(state.members.filter(function (m) { return m.role === "trader"; }).length)],
+        ["Viewers", String(state.members.filter(function (m) { return m.role === "viewer"; }).length)],
+        ["Charter signed", String(state.members.filter(function (m) { return m.charter_agreed_at; }).length)]]) +
       (freshCount ? '<p class="notice">' + freshCount + (freshCount === 1 ? " person has" : " people have") + " joined since you last looked. They are marked New below.</p>" : "") +
       '<div class="members-top"><div class="card"><h2>Org chart</h2>' + orgChart() + "</div>" + codeCardHtml() + "</div>" +
       '<div class="card flush"><div class="card-head"><h2>Roles and job titles</h2></div><div class="table-scroll"><table><thead><tr><th>Member</th><th>Job title</th><th>Joined</th><th>Charter</th><th class="num">Access</th></tr></thead><tbody>' +
@@ -1300,10 +1340,15 @@
   function renderProfile() {
     if (!state.user) { state.view = "signin"; return render(); }
     var u = state.user;
+    var mine = state.trades.filter(function (t) { return (t.type === "buy" || t.type === "sell") && (t.created_by ? t.created_by === u.id : t.trader_name === u.name); });
+    var mineRows = mine.slice(-5).reverse().map(function (t) {
+      return '<li><span class="pill ' + t.type + '">' + (t.type === "buy" ? "Buy" : "Sell") + "</span><span><b>" + fmtQty(t.quantity) + " " + esc(t.code) + "</b> at " + fmtMoney(t.price) + '<br><span class="muted small">' + esc(fmtDate(t.created_at)) + "</span></span></li>";
+    }).join("");
     $("#main").innerHTML =
-      '<div class="page-head"><div><h1>Your profile</h1><div class="muted small">Your name is recorded against every trade you place.</div></div></div>' +
+      bandHtml(roleLabel(u.role), u.name || "Your profile", "Your name is recorded against every trade you place.", [
+        ["Trades you placed", String(mine.length)], ["Last trade", mine.length ? esc(fmtDay(mine[mine.length - 1].created_at)) : "None yet"]], "", avatarHtml(u, "xl band-avatar")) +
       '<div class="profile-grid">' +
-        '<div class="card"><h2>Photo and name</h2>' +
+        '<div class="stack"><div class="card"><h2>Photo and name</h2>' +
           '<div class="photo-row">' + avatarHtml(u, "xl") +
             '<div><input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>' +
             '<button type="button" class="btn secondary" data-action="pick-avatar">' + (safeAvatar(u.avatar) ? "Change photo" : "Upload a photo") + '</button> ' +
@@ -1311,6 +1356,7 @@
             "</div></div>" +
           '<form id="name-form" novalidate><div class="field"><label for="p-name">Display name</label><input id="p-name" type="text" maxlength="60" autocomplete="name" value="' + esc(u.name) + '"></div>' +
           '<div class="form-msg" id="name-msg"></div><button type="submit" class="btn">Save name</button></form></div>' +
+          '<div class="card"><h2>Your recent trades</h2>' + (mineRows ? '<ul class="recent">' + mineRows + "</ul>" : '<p class="muted small" style="margin:0">You have not placed a trade yet.</p>') + "</div></div>" +
         '<div class="stack">' +
           '<div class="card"><h2>Email</h2><form id="email-form" novalidate><div class="field"><label for="p-email">Email address</label><input id="p-email" type="email" autocomplete="email" value="' + esc(u.email) + '"></div>' +
             '<div class="form-msg" id="email-msg"></div><button type="submit" class="btn secondary">Change email</button></form></div>' +
@@ -1775,7 +1821,7 @@
 
   // ---------- events ----------
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member]");
+    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist]");
     if (!t) return;
     if (t.dataset.view) { e.preventDefault(); return go(t.dataset.view); }
     if (t.dataset.side) {
@@ -1786,6 +1832,7 @@
       }
       return renderTrade();
     }
+    if (t.dataset.hist) { state.histFilter = t.dataset.hist; return renderHistory(); }
     if (t.dataset.qtymode) { state.order.qtyMode = t.dataset.qtymode; renderTicket(); var f1 = $(state.order.qtyMode === "amount" ? "#amount" : "#qty"); if (f1) f1.focus(); return; }
     if (t.dataset.otype) { state.order.type = t.dataset.otype; renderTicket(); var f2 = $("#limit"); if (f2) f2.focus(); return; }
     if (t.dataset.cancelOrder) {
