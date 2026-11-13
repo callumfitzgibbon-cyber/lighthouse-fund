@@ -119,6 +119,9 @@
             price: toNum(get("price")),
             change_pct: toNum(get("change_pct")),
             market_cap: toNum(get("market_cap")),
+            day_low: toNum(get("day_low")),
+            day_high: toNum(get("day_high")),
+            trade_date: get("trade_date"),
             excluded: get("excluded")
           };
         });
@@ -191,7 +194,7 @@
     listOrders: function () { return Promise.resolve(demoStore.readOrders().filter(function (o) { return o.status === "open"; })); },
     placeOrder: function (o) {
       var list = demoStore.readOrders();
-      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, status: "open", trader_name: state.user.name, created_by: state.user.id });
+      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, placed_low: o.placed_low || null, placed_high: o.placed_high || null, status: "open", trader_name: state.user.name, created_by: state.user.id });
       demoStore.writeOrders(list);
       return Promise.resolve();
     },
@@ -282,13 +285,20 @@
       return sb.from("orders").select("*").eq("status", "open").order("id", { ascending: true }).then(function (r) {
         if (r.error) { state.ordersOff = true; return []; }
         state.ordersOff = false;
-        return r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); return o; });
+        return r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); o.placed_low = Number(o.placed_low) || 0; o.placed_high = Number(o.placed_high) || 0; return o; });
       });
     },
     placeOrder: function (o) {
-      return sb.from("orders").insert(Object.assign({
+      var row = Object.assign({
         side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, trader_name: state.user.name
-      }, o.approval ? { approval_code: o.approval } : {})).then(function (r) { if (r.error) throw new Error(r.error.message); });
+      }, o.approval ? { approval_code: o.approval } : {});
+      var range = o.placed_low > 0 && o.placed_high > 0 ? { placed_low: o.placed_low, placed_high: o.placed_high } : null;
+      var insert = function (extra) { return sb.from("orders").insert(Object.assign({}, row, extra || {})); };
+      return insert(range).then(function (r) {
+        // A database that has not had the day-range columns added yet still takes the order.
+        if (r.error && range && /placed_(low|high)/.test(r.error.message || "")) return insert(null);
+        return r;
+      }).then(function (r) { if (r.error) throw new Error(r.error.message); });
     },
     cancelOrder: function (id) {
       return sb.rpc("cancel_order", { p_id: id }).then(function (r) { if (r.error) throw new Error(r.error.message); });
@@ -780,14 +790,14 @@
     var el = $("#open-orders");
     if (!el) return;
     if (!state.orders.length) { el.innerHTML = ""; return; }
-    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open limit orders</h2><span class="muted small">These fill when the price reaches the limit while the site is open.</span></div>' +
-      '<div class="table-scroll"><table><thead><tr><th>Placed</th><th>Order</th><th>Stock</th><th class="num">Quantity</th><th class="num">Limit</th><th class="num">Price now</th><th>By</th><th class="num"></th></tr></thead><tbody>' +
+    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open limit orders</h2><span class="muted small">Checked against the low and high of each trading day whenever the site is open.</span></div>' +
+      '<div class="table-scroll"><table><thead><tr><th>Placed</th><th>Order</th><th>Stock</th><th class="num">Quantity</th><th class="num">Limit</th><th class="num">Price now</th><th class="num">Day range</th><th>By</th><th class="num"></th></tr></thead><tbody>' +
       state.orders.map(function (o) {
         var info = state.prices[o.code];
         var mine = isAdmin() || (state.user && o.created_by === state.user.id);
         return '<tr><td class="nowrap">' + esc(fmtDate(o.created_at)) + '</td><td><span class="pill ' + o.side + '">' + (o.side === "buy" ? "Buy" : "Sell") + "</span></td>" +
           '<td class="code">' + esc(o.code) + '</td><td class="num">' + fmtQty(o.quantity) + '</td><td class="num">' + fmtMoney(o.limit_price) + "</td>" +
-          '<td class="num">' + (info && info.price > 0 ? fmtMoney(info.price) : "No price") + '</td><td class="nowrap">' + esc(o.trader_name || "") + "</td>" +
+          '<td class="num">' + (info && info.price > 0 ? fmtMoney(info.price) : "No price") + '</td><td class="num nowrap">' + (info && tradedToday(info) && info.day_low > 0 ? fmtMoney(info.day_low) + " to " + fmtMoney(info.day_high) : "") + '</td><td class="nowrap">' + esc(o.trader_name || "") + "</td>" +
           '<td class="num">' + (mine ? '<button type="button" class="btn secondary small-btn" data-cancel-order="' + esc(o.id) + '">Cancel</button>' : "") + "</td></tr>";
       }).join("") + "</tbody></table></div></div>";
   }
@@ -848,7 +858,7 @@
     var limitNote = "";
     if (n.isLimit && n.limit > 0) {
       limitNote = n.pending
-        ? "This order waits until " + info.code + " is at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". You can cancel it before then."
+        ? "This order waits until " + info.code + " trades at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ", including at any point during the day. You can cancel it before then."
         : "The price is already " + (o.side === "buy" ? "at or below" : "at or above") + " your limit, so this fills straight away at " + fmtMoney(info.price) + ".";
     }
 
@@ -1133,7 +1143,7 @@
       if (!window.confirm("Place a limit order to " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + "?")) return;
       state.busy = true;
       renderCalc();
-      store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.limit, approval: approval })
+      store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.limit, approval: approval, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0 })
         .then(function () { return store.listOrders(); })
         .then(function (list) {
           state.busy = false;
@@ -1169,6 +1179,32 @@
       });
   }
 
+  function sydneyToday() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date()); }
+  // True when the feed's low and high are from today's session, not left over from the last one.
+  function tradedToday(info) { return !!info && info.trade_date === sydneyToday(); }
+
+  // The price a waiting limit order fills at now, or 0 if it has not been reached.
+  // It fills at the current price when that is through the limit. Otherwise, if the day's
+  // low (for a buy) or high (for a sell) touched the limit after the order was placed, it
+  // fills at the limit price, as it would have on the market.
+  function fillPriceFor(o, info) {
+    if (!info || !(info.price > 0)) return 0;
+    var buy = o.side === "buy";
+    if (buy ? info.price <= o.limit_price : info.price >= o.limit_price) return info.price;
+    if (!tradedToday(info)) return 0;
+    var extreme = buy ? info.day_low : info.day_high;
+    if (!(extreme > 0) || (buy ? extreme > o.limit_price : extreme < o.limit_price)) return 0;
+    var now = sydneyWallClock(new Date().toISOString()), placed = sydneyWallClock(o.created_at);
+    if (!now || !placed) return 0;
+    var open = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0);
+    // Placed before today's open: the whole of today's range happened after the order.
+    if (placed.getTime() < open) return o.limit_price;
+    // Placed during today's session: only a new low or high since then counts.
+    var ref = buy ? o.placed_low : o.placed_high;
+    if (ref > 0 && (buy ? extreme < ref : extreme > ref)) return o.limit_price;
+    return 0;
+  }
+
   // Fills any open limit order whose price has been reached. Runs after each price refresh.
   var filling = false;
   function fillDueOrders() {
@@ -1176,16 +1212,15 @@
     // The real record is never filled from sample prices.
     if (state.pricesAreSample && !DEMO) return Promise.resolve();
     var due = state.orders.filter(function (o) {
-      var info = state.prices[o.code];
-      if (!info || !(info.price > 0)) return false;
-      return o.side === "buy" ? info.price <= o.limit_price : info.price >= o.limit_price;
+      o.fillAt = fillPriceFor(o, state.prices[o.code]);
+      return o.fillAt > 0;
     });
     if (!due.length) return Promise.resolve();
     filling = true;
     var filled = [];
     return due.reduce(function (chain, o) {
       return chain.then(function () {
-        var price = state.prices[o.code].price;
+        var price = o.fillAt;
         return store.fillOrder(o.id, price).then(function () { filled.push((o.side === "buy" ? "bought " : "sold ") + fmtQty(o.quantity) + " " + o.code + " at " + fmtMoney(price)); }, function () { /* stays open, tried again next refresh */ });
       });
     }, Promise.resolve()).then(function () {
@@ -1546,5 +1581,5 @@
     });
 
   // Exposed for automated tests.
-  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll };
+  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor };
 })();

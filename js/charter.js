@@ -32,7 +32,7 @@ window.LIGHTHOUSE_CHARTER_HTML = [
   "<h4>5. Trading rules</h4>",
   "<ul>",
   "<li>Every trade goes through the Fund Manager. An Analyst needs the Fund Manager's current approval code to place an order.</li>",
-  "<li>Orders can be placed at the market price or at a limit price. Market orders fill straight away at the delayed price shown. Limit orders wait until the price reaches the limit, and can be cancelled before then.</li>",
+  "<li>Orders can be placed at the market price or at a limit price. Market orders fill straight away at the delayed price shown. Limit orders wait until the stock trades at the limit price, including at any point during the day, and can be cancelled before then.</li>",
   "<li>There is no brokerage on simulated trades.</li>",
   "<li>Every trade is recorded permanently with the name of the person who placed it and the time. Trades cannot be edited or deleted. A mistake is corrected with a new trade.</li>",
   "</ul>",
