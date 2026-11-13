@@ -581,6 +581,21 @@
   // ---------- trade approval code ----------
   // Analysts need the fund manager's current code to place a trade. Fund managers trade without one.
   function needsCode() { return !DEMO && canTrade() && !isAdmin(); }
+  // The database's six-digit code is shown and typed as three words. Each pair of digits picks one word.
+  var CODE_WORDS = "amber anchor arrow aspen atlas aurora autumn badger banner basalt beacon birch bishop bridge bronze canyon cedar cinder cobalt comet copper coral cove crane crimson delta dune eagle ember falcon fathom fern flint forest fox frost garnet glacier granite grove harbour hawk hazel heron horizon indigo iron island ivory jade jasper juniper keel kestrel lagoon lantern lark linen lotus lunar maple marble meadow mercury mist navy north oak ocean olive onyx opal orbit otter pearl pepper pilot pine quartz raven reef river saffron sage silver slate spruce storm summit tide timber topaz tundra velvet violet walnut willow winter yarrow zephyr".split(" ");
+  function phraseFor(code) {
+    return /^\d{6}$/.test(code || "") ? [0, 2, 4].map(function (i) { return CODE_WORDS[Number(code.substr(i, 2))]; }) : [];
+  }
+  // Turns what an analyst typed back into the six digits. The digits themselves still work.
+  function codeFromPhrase(text) {
+    var raw = String(text || "").trim().toLowerCase();
+    if (/^\d{6}$/.test(raw.replace(/\s/g, ""))) return raw.replace(/\s/g, "");
+    var parts = raw.split(/[^a-z]+/).filter(Boolean);
+    if (parts.length !== 3) return "";
+    var out = "";
+    for (var i = 0; i < 3; i++) { var n = CODE_WORDS.indexOf(parts[i]); if (n < 0) return ""; out += ("0" + n).slice(-2); }
+    return out;
+  }
   var codeState = { code: null, expires: 0, error: null, loading: false, tried: 0 };
 
   function codeCardHtml() {
@@ -588,15 +603,15 @@
     return '<div class="card code-card" id="code-card">' + codeCardInner() + "</div>";
   }
   function codeCardInner() {
-    var head = '<div class="eyebrow light">Trade approval code</div>';
+    var head = '<div class="eyebrow light">Trade codephrase</div>';
     if (codeState.error) return head + '<p class="code-note">' + esc(codeState.error) + "</p>";
-    if (!codeState.code) return head + '<div class="code-digits">··· ···</div><p class="code-note">Loading…</p>';
+    if (!codeState.code) return head + '<div class="code-digits">· · ·</div><p class="code-note">Loading…</p>';
     var left = Math.max(0, Math.ceil((codeState.expires - Date.now()) / 1000));
     return head +
-      '<div class="code-digits" aria-label="Approval code ' + codeState.code.split("").join(" ") + '">' + codeState.code.slice(0, 3) + " " + codeState.code.slice(3) + "</div>" +
+      '<div class="code-digits phrase" aria-label="Codephrase ' + phraseFor(codeState.code).join(" ") + '">' + phraseFor(codeState.code).map(function (w) { return "<span>" + w + "</span>"; }).join("") + "</div>" +
       '<div class="code-bar"><span style="width:' + Math.min(100, left / 3) + '%"></span></div>' +
-      '<div class="code-foot"><span>New code in ' + Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2) + '</span><button type="button" class="link" data-action="copy-code">Copy</button></div>' +
-      '<p class="code-note">Only you can see this. Give it to an analyst to approve their trade.</p>';
+      '<div class="code-foot"><span>New phrase in ' + Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2) + '</span><button type="button" class="link" data-action="copy-code">Copy</button></div>' +
+      '<p class="code-note">Only you can see this. Give the three words to an analyst to approve their trade.</p>';
   }
   function tickCode() {
     var el = $("#code-card");
@@ -1087,7 +1102,7 @@
           ? '<div class="money-input"><span>$</span><input id="limit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="' + info.price.toFixed(2) + '" value="' + esc(o.limit) + '"></div>'
           : '<div class="static-field">' + fmtMoney(info.price) + ' <span class="muted small">current price, fills straight away</span></div>') + "</div>" +
       sleeveField +
-      (needsCode() ? '<div class="field"><label for="approval">Approval code from the fund manager</label><input id="approval" class="code-input" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="6 digits" value="' + esc(o.approval) + '"><div class="muted small" style="margin-top:5px">Every trade goes through the fund manager. Ask them for the current code. It changes every 5 minutes.</div></div>' : "") +
+      (needsCode() ? '<div class="field"><label for="approval">Codephrase from the fund manager</label><input id="approval" class="code-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" placeholder="three words, for example amber harbour beacon" value="' + esc(o.approval) + '"><div class="muted small" style="margin-top:5px">Every trade goes through the fund manager. Ask them for the current three-word codephrase. It changes every 5 minutes.</div></div>' : "") +
       '<div id="calc"></div>';
     renderCalc();
   }
@@ -1108,7 +1123,7 @@
     var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
     var issues = typed || (n.isLimit && o.limit !== "") ? validateOrder(o, pf) : [];
     if (!typed) issues = issues.filter(function (i) { return /limit/i.test(i); });
-    var ok = typed && qty > 0 && !issues.length && !state.busy && (!needsCode() || /^\d{6}$/.test(o.approval));
+    var ok = typed && qty > 0 && !issues.length && !state.busy && (!needsCode() || !!codeFromPhrase(o.approval));
     var limitNote = "";
     if (n.isLimit && n.limit > 0) {
       limitNote = n.pending
@@ -1537,7 +1552,7 @@
     var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
     var sleeve = isEtf ? "index" : o.side === "sell" && held ? held.sleeve : o.sleeve;
     var verb = o.side === "buy" ? "Buy" : "Sell";
-    var approval = needsCode() ? o.approval : "";
+    var approval = needsCode() ? codeFromPhrase(o.approval) : "";
 
     if (n.pending) {
       confirmBox("Place this limit order?", verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there and can be cancelled before then.", "Place order").then(function (ok) {
@@ -1942,7 +1957,7 @@
         .catch(function (err) { t.disabled = false; toast("Not saved: " + err.message); });
     }
     else if (a === "copy-code") {
-      if (codeState.code && navigator.clipboard) navigator.clipboard.writeText(codeState.code).then(function () { toast("Code copied"); }, function () { toast("Could not copy. Read it out instead."); });
+      if (codeState.code && navigator.clipboard) navigator.clipboard.writeText(phraseFor(codeState.code).join(" ")).then(function () { toast("Codephrase copied"); }, function () { toast("Could not copy. Read it out instead."); });
     }
     else if (a === "enter-demo") setDemo(true);
     else if (a === "seed-demo") {
@@ -1982,7 +1997,7 @@
     else if (id === "qty") { state.order.qty = e.target.value; renderCalc(); }
     else if (id === "amount") { state.order.amount = e.target.value; renderCalc(); }
     else if (id === "limit") { state.order.limit = e.target.value; renderCalc(); }
-    else if (id === "approval") { e.target.value = e.target.value.replace(/\D/g, ""); state.order.approval = e.target.value; renderCalc(); }
+    else if (id === "approval") { state.order.approval = e.target.value; renderCalc(); }
   });
 
   document.addEventListener("change", function (e) {
@@ -2024,5 +2039,5 @@
     });
 
   // Exposed for automated tests.
-  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor };
+  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor, phraseFor: phraseFor, codeFromPhrase: codeFromPhrase };
 })();

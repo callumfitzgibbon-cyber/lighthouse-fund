@@ -233,7 +233,7 @@ a.code:hover { color: var(--rose); }
 .code-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 13px; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
 .code-foot .link { color: #ff9aa9; }
 .code-note { margin: 10px 0 0; font-size: 12.5px; color: rgba(255, 255, 255, 0.8); }
-.code-input { font-size: 20px; font-weight: 600; letter-spacing: 0.3em; font-variant-numeric: tabular-nums; text-align: center; }
+.code-input { font-size: 17px; font-weight: 600; letter-spacing: 0.04em; text-align: center; }
 .code-input::placeholder { letter-spacing: normal; font-weight: 400; font-size: 14.5px; }
 
 /* Mandate checks */
@@ -668,3 +668,5 @@ table { font-size: 14px; }
 .sector-tile.on { background-color: rgba(60, 22, 34, 0.96); }
 .chip { background: rgba(28, 32, 41, 0.94); }
 .code-card { background: linear-gradient(140deg, #1d2129, #2a2f39 70%, #6b1f31); }
+.code-digits.phrase { display: flex; flex-wrap: wrap; gap: 8px; font-size: 21px; letter-spacing: 0.06em; text-transform: uppercase; font-family: "Montserrat", "Inter", system-ui, sans-serif; margin: 10px 0 14px; }
+.code-digits.phrase span { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 9px; padding: 6px 12px; line-height: 1.2; }
