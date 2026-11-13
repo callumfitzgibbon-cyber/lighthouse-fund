@@ -502,10 +502,10 @@ h1 { letter-spacing: -0.015em; }
 /* ---------- lighthouse beam ---------- */
 .home-hero::before, .hero::before, .auth-art::before {
   content: ""; position: absolute; left: 68%; top: 34%; width: 1700px; height: 1700px; margin: -850px 0 0 -850px; pointer-events: none;
-  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.13) 12deg, rgba(255, 255, 255, 0) 30deg, rgba(255, 255, 255, 0) 180deg, rgba(255, 255, 255, 0.07) 192deg, rgba(255, 255, 255, 0) 210deg);
+  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.24) 12deg, rgba(255, 255, 255, 0) 32deg, rgba(255, 255, 255, 0) 180deg, rgba(255, 255, 255, 0.12) 192deg, rgba(255, 255, 255, 0) 210deg);
   animation: beam 22s linear infinite;
 }
-.hero::before { left: 78%; top: 50%; opacity: 0.7; }
+.hero::before { left: 78%; top: 50%; opacity: 0.85; }
 .auth-art::before { left: 50%; top: 40%; }
 @keyframes beam { to { transform: rotate(360deg); } }
 
@@ -565,8 +565,8 @@ h1 { letter-spacing: -0.015em; }
 
 /* ---------- page band ---------- */
 .band { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: center; background: linear-gradient(120deg, #16181d 0%, #2b2f36 60%, #4a1c28 100%); color: #fff; border-radius: 16px; padding: 30px 34px; margin-bottom: 18px; position: relative; overflow: hidden; }
-.band::before { content: ""; position: absolute; left: 80%; top: 50%; width: 1500px; height: 1500px; margin: -750px 0 0 -750px; pointer-events: none; opacity: 0.6;
-  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.12) 12deg, rgba(255, 255, 255, 0) 30deg, rgba(255, 255, 255, 0) 360deg); animation: beam 26s linear infinite; }
+.band::before { content: ""; position: absolute; left: 80%; top: 50%; width: 1500px; height: 1500px; margin: -750px 0 0 -750px; pointer-events: none; opacity: 0.85;
+  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, 0.22) 12deg, rgba(255, 255, 255, 0) 32deg, rgba(255, 255, 255, 0) 360deg); animation: beam 20s linear infinite; }
 .band > * { position: relative; z-index: 1; min-width: 0; }
 .band:has(.band-avatar) { grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; }
 .band h1 { font-size: 32px; margin: 8px 0 8px; color: #fff; letter-spacing: -0.02em; }
@@ -635,3 +635,22 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(1); }
 .members-only { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding: 26px 28px; border-left: 3px solid var(--crimson); }
 .members-only h2 { font-size: 19px; margin-bottom: 6px; }
 .members-only p { margin: 0; max-width: 620px; font-size: 14.5px; line-height: 1.55; }
+
+/* ---------- moving background: a slow lighthouse beam and drifting glow behind every page ---------- */
+html { background: var(--bg); }
+body { background: transparent; position: relative; }
+.bg-fx { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.bg-fx i { position: absolute; display: block; }
+.bg-beam { right: 6vw; top: 12vh; width: 320vmax; height: 320vmax; margin: -160vmax -160vmax 0 0;
+  background: conic-gradient(from 0deg, rgba(255, 255, 255, 0) 0deg, rgba(255, 120, 140, 0.11) 10deg, rgba(255, 255, 255, 0) 26deg, rgba(255, 255, 255, 0) 180deg, rgba(255, 255, 255, 0.055) 190deg, rgba(255, 255, 255, 0) 206deg);
+  animation: beam 34s linear infinite; }
+.bg-glow { width: 62vmax; height: 62vmax; border-radius: 50%; filter: blur(40px); }
+.bg-glow.a { left: -18vmax; top: 30vh; background: radial-gradient(circle, rgba(158, 27, 50, 0.34), rgba(158, 27, 50, 0) 65%); animation: drift-a 26s ease-in-out infinite alternate; }
+.bg-glow.b { right: -20vmax; bottom: -24vmax; background: radial-gradient(circle, rgba(60, 110, 200, 0.2), rgba(60, 110, 200, 0) 65%); animation: drift-b 32s ease-in-out infinite alternate; }
+.bg-grid { inset: 0; background-image: linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px); background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse at 70% 10%, #000 0%, transparent 70%); mask-image: radial-gradient(ellipse at 70% 10%, #000 0%, transparent 70%); animation: grid-slide 40s linear infinite; }
+@keyframes drift-a { to { transform: translate(26vw, -18vh) scale(1.15); } }
+@keyframes drift-b { to { transform: translate(-22vw, -20vh) scale(0.9); } }
+@keyframes grid-slide { to { background-position: 56px 56px; } }
+.foot { background: rgba(15, 18, 23, 0.82); }
+@media (prefers-reduced-motion: reduce) { .bg-fx i { animation: none; } }
