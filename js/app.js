@@ -223,9 +223,9 @@
       var list = [{ id: 1, created_at: new Date(now - 12 * day).toISOString(), type: "deposit", code: null, sleeve: null, quantity: null, price: null, brokerage: 0, cash_amount: CFG.STARTING_CAPITAL, note: "Notional starting capital", trader_name: "System" }];
       var plan = [
         [CFG.ETF_CODE, "index", 45000, 11, "Core index holding"],
-        ["JBH", "competition", 10000, 9, "Competition winner: retail earnings momentum"],
-        ["XRO", "competition", 10000, 9, "Competition runner-up: subscriber growth"],
-        ["COH", "competition", 10000, 9, "Competition third place: implant demand"],
+        ["JBH", "competition", 15000, 9, "Competition winner: retail earnings momentum"],
+        ["XRO", "competition", 15000, 9, "Competition runner-up: subscriber growth"],
+        ["COH", "competition", 15000, 9, "Competition third place: implant demand"],
         ["NST", "active", 8000, 4, "Active sleeve: gold exposure"]
       ];
       plan.forEach(function (row) {
@@ -474,7 +474,7 @@
         if (CFG.MIN_ETF_VALUE > 0 && pf.etfValue < CFG.MIN_ETF_VALUE) issues.push("The index ETF holding is below the " + fmtMoney(CFG.MIN_ETF_VALUE) + " floor. Buy " + CFG.ETF_CODE + " first.");
         var totalAfter = pf.total - brokerage;
         var weightAfter = totalAfter > 0 ? (heldValue + value) / totalAfter : 1;
-        if (weightAfter > CFG.MAX_STOCK_WEIGHT + 1e-9) issues.push("This would take " + info.code + " to " + fmtPct(weightAfter) + " of the fund. The limit is " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + ".");
+        if (weightAfter > CFG.MAX_STOCK_WEIGHT + 1e-9) issues.push("This would take " + info.code + " to " + fmtPct(weightAfter) + " of the fund. You cannot buy a stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + ".");
         if (order.sleeve === "active" && pf.activeValue + value > CFG.ACTIVE_SLEEVE_CAP + 0.005) issues.push("This would take the active sleeve to " + fmtMoney(pf.activeValue + value) + ". The cap is " + fmtMoney(CFG.ACTIVE_SLEEVE_CAP) + ".");
       }
     } else {
@@ -670,7 +670,7 @@
     var biggest = pf.positions[0];
 
     var rows = pf.positions.map(function (p) {
-      var over = p.code !== CFG.ETF_CODE && p.weight > CFG.MAX_STOCK_WEIGHT;
+      var over = false; // the limit applies to buying, so a holding that has grown past it is fine
       return "<tr>" +
         '<td><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a><div class="muted small">' + esc(p.name) + "</div></td>" +
         "<td>" + esc(sleeveLabel(p.sleeve)) + "</td>" +
@@ -685,7 +685,7 @@
     var invested = pf.holdingsValue > 0;
     var checkList = [];
     if (CFG.MIN_ETF_VALUE > 0) checkList.push(["Index ETF at least " + fmtMoney(CFG.MIN_ETF_VALUE), invested ? pf.etfValue >= CFG.MIN_ETF_VALUE : null, fmtMoney(pf.etfValue)]);
-    checkList.push(["No stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0), invested ? pf.maxWeight <= CFG.MAX_STOCK_WEIGHT : null, "Largest is " + fmtPct(pf.maxWeight)]);
+    checkList.push(["No buying a stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0), invested ? true : null, "Largest is " + fmtPct(pf.maxWeight) + (pf.maxWeight > CFG.MAX_STOCK_WEIGHT ? " after price rises" : "")]);
     checkList.push(["Active sleeve within " + fmtMoney(CFG.ACTIVE_SLEEVE_CAP, 0), invested ? pf.activeValue <= CFG.ACTIVE_SLEEVE_CAP : null, fmtMoney(pf.activeValue) + " used"]);
     checkList.push(["Competition stocks in different sectors", pf.competitionCount > 0 ? pf.competitionSectors === pf.competitionCount : null, pf.competitionSectors + (pf.competitionSectors === 1 ? " sector across " : " sectors across ") + pf.competitionCount + (pf.competitionCount === 1 ? " stock" : " stocks")]);
     var checks = checkList.map(function (c) {

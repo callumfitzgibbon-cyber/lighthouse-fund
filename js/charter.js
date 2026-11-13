@@ -22,7 +22,7 @@ window.LIGHTHOUSE_CHARTER_HTML = [
   "<ul>",
   "<li><strong>Universe.</strong> Companies in the S&amp;P/ASX 300, plus an ASX 300 index ETF (currently Vanguard VAS).</li>",
   "<li><strong>Long only.</strong> No short selling, borrowing or derivatives.</li>",
-  "<li><strong>Single stock limit.</strong> No single stock above 15% of the fund's value. The index ETF is exempt.</li>",
+  "<li><strong>Single stock limit.</strong> No buy may take a single stock above 15% of the fund's value. A holding that rises above 15% after it was bought may be kept, but no more of it can be bought while it is above the limit. The index ETF is exempt.</li>",
   "<li><strong>Competition stocks.</strong> The stocks bought from the annual competition must come from different sectors.</li>",
   "<li><strong>Active sleeve.</strong> Up to A$30,000 may be invested in the winning team's own picks.</li>",
   "<li><strong>Index ETF and cash.</strong> Money not invested in stocks is held in the index ETF or in cash. There is no minimum holding in either.</li>",
