@@ -38,7 +38,7 @@ window.LIGHTHOUSE_CHARTER_HTML = [
   "</ul>",
 
   "<h4>6. The annual competition</h4>",
-  "<p>The fund is built through one stock pitch competition a year, held in Semester 2. In the first year the top three pitches are bought at A$10,000 each, and the winning team may run the active sleeve until the next final. Teams whose pitch is bought keep covering that stock while the fund holds it. The competition rulebook sets the detail each year.</p>",
+  "<p>The fund is built through one stock pitch competition a year, held in Semester 2. In the first year the top three pitches are bought at A$15,000 each, and the winning team may run the active sleeve until the next final. Teams whose pitch is bought keep covering that stock while the fund holds it. The competition rulebook sets the detail each year.</p>",
 
   "<h4>7. Conduct</h4>",
   "<ul>",
