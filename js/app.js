@@ -674,7 +674,7 @@
       acc += share;
       return el;
     }).join("");
-    return '<svg class="donut" viewBox="0 0 42 42" role="img" aria-label="Allocation of the fund"><circle cx="21" cy="21" r="15.915" fill="none" stroke="#2a2d34" stroke-width="5"/>' + rings + "</svg>";
+    return '<svg class="donut" viewBox="0 0 42 42" role="img" aria-label="Allocation of the fund"><circle cx="21" cy="21" r="15.915" fill="none" stroke="#3d4451" stroke-width="5"/>' + rings + "</svg>";
   }
 
   function renderPortfolio() {
