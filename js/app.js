@@ -285,6 +285,11 @@
       return sb.from("orders").select("*").eq("status", "open").order("id", { ascending: true }).then(function (r) {
         if (r.error) { state.ordersOff = true; return []; }
         state.ordersOff = false;
+        // When the database checks orders by itself, show when it last did.
+        sb.from("order_checks").select("checked_at, ok, note").eq("id", 1).maybeSingle().then(function (c) {
+          state.orderCheck = c && !c.error ? c.data : null;
+          if (state.view === "trade") renderOpenOrders();
+        }, function () { state.orderCheck = null; });
         return r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); o.placed_low = Number(o.placed_low) || 0; o.placed_high = Number(o.placed_high) || 0; return o; });
       });
     },
@@ -786,11 +791,18 @@
     renderOpenOrders();
   }
 
+  function orderCheckText() {
+    var c = state.orderCheck;
+    if (DEMO || !c || !c.checked_at) return "Checked against the low and high of each trading day whenever the site is open.";
+    if (c.ok === false) return "The last automatic check at " + fmtDate(c.checked_at) + " did not work: " + (c.note || "unknown problem") + ".";
+    return "Checked automatically every 5 minutes, 9am to 7pm Sydney time. Last check " + fmtDate(c.checked_at) + ".";
+  }
+
   function renderOpenOrders() {
     var el = $("#open-orders");
     if (!el) return;
     if (!state.orders.length) { el.innerHTML = ""; return; }
-    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open limit orders</h2><span class="muted small">Checked against the low and high of each trading day whenever the site is open.</span></div>' +
+    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open limit orders</h2><span class="muted small">' + esc(orderCheckText()) + '</span></div>' +
       '<div class="table-scroll"><table><thead><tr><th>Placed</th><th>Order</th><th>Stock</th><th class="num">Quantity</th><th class="num">Limit</th><th class="num">Price now</th><th class="num">Day range</th><th>By</th><th class="num"></th></tr></thead><tbody>' +
       state.orders.map(function (o) {
         var info = state.prices[o.code];
