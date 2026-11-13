@@ -324,6 +324,29 @@ body.auth-page main { max-width: none; padding: 0; min-height: 100vh; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .modal-box.wide { max-width: 460px; }
+.charter-scroll { max-height: 260px; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; padding: 14px 16px; font-size: 13px; line-height: 1.55; color: var(--charcoal); margin-top: 8px; }
+.charter-scroll:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+.charter-scroll h3 { font-size: 15px; margin: 0 0 2px; color: var(--ink); }
+.charter-scroll h4 { font-size: 13px; margin: 14px 0 4px; color: var(--ink); }
+.charter-scroll p { margin: 0 0 8px; }
+.charter-scroll ul { margin: 0 0 8px; padding-left: 18px; }
+.charter-scroll li { margin-bottom: 4px; }
+.charter-meta { color: var(--muted); font-size: 12px; }
+.charter-hint { margin: 8px 0 0; }
+.check-row input:disabled + span { color: var(--muted); }
+.modal-box.wide .charter-scroll { max-height: 46vh; }
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.field-head label { margin: 0; }
+.mini-seg { display: inline-flex; background: #eef0f3; border-radius: 7px; padding: 2px; }
+.mini-seg button { background: transparent; border: 0; border-radius: 5px; padding: 3px 10px; font: inherit; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.mini-seg button[aria-pressed="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(22, 24, 29, 0.14); }
+.money-input { position: relative; }
+.money-input span { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.money-input input { padding-left: 26px; }
+.static-field { padding: 9px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; background: #fafbfc; font-weight: 600; font-variant-numeric: tabular-nums; }
+.static-field .small { font-weight: 400; }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { background: var(--bad-soft); color: var(--bad); }
 .charter-points { margin: 10px 0; padding-left: 18px; font-size: 13px; color: var(--charcoal); }
 .charter-points li { margin-bottom: 6px; }
 .charter-box { border: 1px solid var(--line); background: #fafbfc; border-radius: 10px; padding: 14px; margin-bottom: 14px; }

@@ -9,8 +9,7 @@ window.LIGHTHOUSE_CONFIG = {
   PRICES_CSV_URL: "https://docs.google.com/spreadsheets/d/13SfuLb3d5nv2o2-GCNQIRsD1OU-pD1rG4j0TeGA5xNg/gviz/tq?tqx=out:csv&headers=1&sheet=Feed",
 
   FUND_NAME: "AFSA Lighthouse Fund",
-  CHARTER_URL: "https://claude.ai/artifact/USKptJG69Ev14rHHQtss6w", // full charter, opened from the sign-up form
-  CHARTER_VERSION: "2026-11", // change this when the charter changes
+  CHARTER_VERSION: "2026-11", // change this when the charter in js/charter.js changes
   STARTING_CAPITAL: 100000,
   INCEPTION_DATE: "2027-07-01",
   ETF_CODE: "VAS",

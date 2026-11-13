@@ -1,6 +1,7 @@
 -- Lighthouse Fund database update, 13 November 2026.
 -- Paste this whole file into the Supabase SQL editor and run it once.
--- It adds job titles, charter sign-off, and the fund manager's trade approval code.
+-- It adds job titles, charter sign-off, the fund manager's trade approval code,
+-- limit orders, and removing accounts. It is safe to run more than once.
 -- It does NOT touch the trade record.
 
 -- ---------- 1. job titles and charter sign-off ----------
@@ -128,11 +129,15 @@ declare
   v_held numeric;
   v_value numeric;
   v_window bigint := floor(extract(epoch from now()) / 300);
+  v_from_order boolean := coalesce(current_setting('lighthouse.order_fill', true), '') = '1';
 begin
   -- One trade at a time, so two orders cannot both spend the same cash.
   perform pg_advisory_xact_lock(727001);
 
-  if auth.uid() is not null then
+  if v_from_order then
+    -- A limit order being filled: it was approved when it was placed.
+    new.created_at := now();
+  elsif auth.uid() is not null then
     new.created_by := auth.uid();
     new.created_at := now();
   end if;
@@ -141,7 +146,7 @@ begin
   if new.type in ('buy', 'sell') then
     -- Every trade goes through the fund manager: anyone else needs the current code
     -- (or the one that expired in the last five minutes).
-    if auth.uid() is not null and coalesce(public.current_role_name(), 'viewer') <> 'admin' then
+    if not v_from_order and auth.uid() is not null and coalesce(public.current_role_name(), 'viewer') <> 'admin' then
       if new.approval_code is null
          or btrim(new.approval_code) not in (public.trade_code_for(v_window), public.trade_code_for(v_window - 1)) then
         raise exception 'That approval code is wrong or has expired. Ask the fund manager for the current code.';
@@ -181,6 +186,157 @@ begin
   return new;
 end;
 $$;
+
+-- ---------- 3. limit orders ----------
+-- An order that waits until the price reaches its limit. Filling it adds a normal trade.
+create table if not exists public.orders (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  created_by uuid references public.profiles (id) on delete set null,
+  trader_name text,
+  side text not null check (side in ('buy', 'sell')),
+  code text not null,
+  sleeve text not null check (sleeve in ('index', 'competition', 'active')),
+  quantity numeric not null check (quantity > 0),
+  limit_price numeric not null check (limit_price > 0),
+  status text not null default 'open' check (status in ('open', 'filled', 'cancelled')),
+  closed_at timestamptz,
+  fill_price numeric,
+  approval_code text
+);
+
+create or replace function public.check_order()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_window bigint := floor(extract(epoch from now()) / 300);
+begin
+  if auth.uid() is not null then
+    new.created_by := auth.uid();
+    new.created_at := now();
+    if coalesce(public.current_role_name(), 'viewer') <> 'admin' then
+      if new.approval_code is null
+         or btrim(new.approval_code) not in (public.trade_code_for(v_window), public.trade_code_for(v_window - 1)) then
+        raise exception 'That approval code is wrong or has expired. Ask the fund manager for the current code.';
+      end if;
+    end if;
+  end if;
+  new.code := upper(new.code);
+  new.status := 'open';
+  new.closed_at := null;
+  new.fill_price := null;
+  new.approval_code := null;
+  return new;
+end;
+$$;
+
+drop trigger if exists check_order on public.orders;
+create trigger check_order
+  before insert on public.orders
+  for each row execute function public.check_order();
+
+alter table public.orders enable row level security;
+drop policy if exists "orders are public" on public.orders;
+create policy "orders are public" on public.orders
+  for select to anon, authenticated using (true);
+drop policy if exists "traders place orders" on public.orders;
+create policy "traders place orders" on public.orders
+  for insert to authenticated
+  with check (public.current_role_name() in ('trader', 'admin'));
+revoke all on public.orders from anon, authenticated;
+grant select on public.orders to anon, authenticated;
+grant insert on public.orders to authenticated;
+
+-- Fills an open order once the market price has reached its limit.
+create or replace function public.fill_order(p_id bigint, p_price numeric)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_order public.orders;
+  v_trade_id bigint;
+begin
+  if coalesce(public.current_role_name(), 'viewer') not in ('trader', 'admin') then
+    raise exception 'Only analysts and fund managers can fill orders';
+  end if;
+  select * into v_order from public.orders where id = p_id for update;
+  if not found or v_order.status <> 'open' then
+    raise exception 'That order is no longer open';
+  end if;
+  if p_price is null or p_price <= 0
+     or (v_order.side = 'buy' and p_price > v_order.limit_price)
+     or (v_order.side = 'sell' and p_price < v_order.limit_price) then
+    raise exception 'The price has not reached the limit';
+  end if;
+
+  perform set_config('lighthouse.order_fill', '1', true);
+  insert into public.trades (type, code, sleeve, quantity, price, note, trader_name, created_by)
+  values (v_order.side, v_order.code, v_order.sleeve, v_order.quantity, p_price,
+          'Limit order at $' || trim(to_char(v_order.limit_price, 'FM999999990.00')), v_order.trader_name, v_order.created_by)
+  returning id into v_trade_id;
+  perform set_config('lighthouse.order_fill', '', true);
+
+  update public.orders set status = 'filled', closed_at = now(), fill_price = p_price where id = p_id;
+  return v_trade_id;
+end;
+$$;
+revoke all on function public.fill_order(bigint, numeric) from public, anon;
+grant execute on function public.fill_order(bigint, numeric) to authenticated;
+
+-- The person who placed an order, or a fund manager, can cancel it while it is open.
+create or replace function public.cancel_order(p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_order public.orders;
+begin
+  select * into v_order from public.orders where id = p_id for update;
+  if not found or v_order.status <> 'open' then
+    raise exception 'That order is no longer open';
+  end if;
+  if coalesce(public.current_role_name(), 'viewer') <> 'admin' and v_order.created_by is distinct from auth.uid() then
+    raise exception 'Only the person who placed the order or a fund manager can cancel it';
+  end if;
+  update public.orders set status = 'cancelled', closed_at = now() where id = p_id;
+end;
+$$;
+revoke all on function public.cancel_order(bigint) from public, anon;
+grant execute on function public.cancel_order(bigint) to authenticated;
+
+-- ---------- 4. removing accounts ----------
+-- Trades stay on the record under the person's name after their account is removed.
+alter table public.trades drop constraint if exists trades_created_by_fkey;
+alter table public.trades add constraint trades_created_by_fkey
+  foreign key (created_by) references public.profiles (id) on delete set null;
+
+create or replace function public.remove_member(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if coalesce(public.current_role_name(), 'viewer') <> 'admin' then
+    raise exception 'Only a fund manager can remove accounts';
+  end if;
+  if p_id = auth.uid() then
+    raise exception 'You cannot remove your own account';
+  end if;
+  update public.orders set status = 'cancelled', closed_at = now() where created_by = p_id and status = 'open';
+  delete from auth.users where id = p_id;
+  delete from public.profiles where id = p_id;
+end;
+$$;
+revoke all on function public.remove_member(uuid) from public, anon;
+grant execute on function public.remove_member(uuid) to authenticated;
 
 -- Tell the API about the new columns and functions straight away.
 notify pgrst, 'reload schema';

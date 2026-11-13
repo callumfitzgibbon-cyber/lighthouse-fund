@@ -9,7 +9,9 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 - **Companies**: every company in the feed, each linked to its profile on Market Index.
 - **History**: a permanent record of every trade, with who placed it and when, and an Excel download.
 - **Approval code**: analysts need the Fund Manager's six-digit code to place a trade. It changes every 5 minutes, only the Fund Manager can see it, and the database checks it.
-- **Charter**: new members must agree to the charter when they sign up, and the date is recorded.
+- **Charter**: the full charter (`js/charter.js`) is shown on the sign-up form. New members scroll to the end and tick to agree, and the date is recorded.
+- **Order types**: order by number of shares or by dollar amount (rounded down to whole shares), at the market price or at a limit price. Limit orders wait in an open-orders list and fill when the delayed price reaches the limit while a fund manager or analyst has the site open.
+- **Removing accounts**: a fund manager can remove an account from the Members page. That person's trades stay on the record under their name.
 - **Profile**: each member can change their name, photo, email and password.
 - **Members**: the Fund Manager sets who can trade. Roles are Fund Manager, Analyst and Viewer (stored in the database as `admin`, `trader` and `viewer`).
 
