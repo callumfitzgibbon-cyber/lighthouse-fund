@@ -31,9 +31,10 @@ window.LIGHTHOUSE_CHARTER_HTML = [
 
   "<h4>5. Trading rules</h4>",
   "<ul>",
-  "<li>Every trade goes through the Fund Manager. An Analyst needs the Fund Manager's current codephrase to place an order.</li>",
-  "<li>Orders can be placed at the market price or at a limit price. Market orders fill straight away at the delayed price shown. Limit orders wait until the stock trades at the limit price, including at any point during the day, and can be cancelled before then.</li>",
+  "<li>Every trade goes through the Fund Manager. An Analyst proposes a trade with a short written case, and the Fund Manager approves or rejects it. Nothing is placed until it is approved.</li>",
+  "<li>Orders can be placed at the market price or at a limit price. Market orders fill only while the ASX is open, at the delayed price shown plus a 0.1% spread for a buy or less 0.1% for a sell. An order placed outside trading hours waits and fills when trading next starts. Limit orders wait until the stock trades at the limit price, including at any point during the day, and can be cancelled before then.</li>",
   "<li>There is no brokerage on simulated trades.</li>",
+  "<li>Each holding can be given a price target and a review price. Reaching the review price does not sell the stock. It means the case for holding it is looked at again.</li>",
   "<li>Dividends are recorded by the Fund Manager when they are paid, using the cents per share and the shares the fund holds. Each one is either kept as cash or reinvested in the same stock. Reinvesting counts as a buy, so the single stock limit applies.</li>",
   "<li>Every trade is recorded permanently with the name of the person who placed it and the time. Trades cannot be edited or deleted. A mistake is corrected with a new trade.</li>",
   "</ul>",

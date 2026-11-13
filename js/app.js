@@ -26,9 +26,15 @@
     pricesUpdated: null,
     pricesAreSample: false,
     priceError: null,
-    order: { code: null, side: "buy", qtyMode: "shares", qty: "", amount: "", type: "market", limit: "", sleeve: "competition", approval: "" },
-    orders: [], // open limit orders
+    order: { code: null, side: "buy", qtyMode: "shares", qty: "", amount: "", type: "market", limit: "", sleeve: "competition", approval: "", rationale: "" },
+    orders: [], // open orders: limit orders, and market orders waiting for the open
     ordersOff: false, // true until the database has the orders table
+    queueOff: false, // true until the database can hold market orders for the open
+    proposals: [], // analyst trades waiting for, or decided by, the fund manager
+    proposalsOn: false, // true when the database has the proposals table
+    levels: {}, // price target and review level for each holding
+    levelsOn: false,
+    report: { month: "", comment: "" },
     search: "",
     sector: "",
     coSearch: "",
@@ -60,6 +66,11 @@
   function isAdmin() { return !!state.user && state.user.role === "admin"; }
   function brokerageFor(value) { return Math.max(CFG.BROKERAGE_FLAT, value * CFG.BROKERAGE_RATE); }
   function round2(n) { return Math.round(n * 100) / 100; }
+  function round3(n) { return Math.round(n * 1000) / 1000; }
+  // Buys fill a little above the quoted price and sells a little below, like a real market.
+  var SPREAD = CFG.SPREAD > 0 ? CFG.SPREAD : 0;
+  function quote(info, side) { return round3(info.price * (side === "buy" ? 1 + SPREAD : 1 - SPREAD)); }
+  function fmtPrice(n) { return Math.abs(n * 100 - Math.round(n * 100)) > 1e-6 ? "$" + Number(n).toFixed(3) : fmtMoney(n); }
 
   var toastTimer;
   function toast(msg) {
@@ -141,6 +152,9 @@
   var LS_TRADES = "lighthouse.demo.trades";
   var LS_PROFILE = "lighthouse.demo.profile";
   var LS_ORDERS = "lighthouse.demo.orders";
+  var LS_PROPOSALS = "lighthouse.demo.proposals";
+  var LS_LEVELS = "lighthouse.demo.levels";
+  var LS_REPORTS = "lighthouse.demo.reports";
 
   var demoStore = {
     init: function () {
@@ -190,7 +204,7 @@
           created_at: new Date().toISOString(),
           brokerage: round2(brokerageFor(value)),
           cash_amount: null,
-          trader_name: state.user.name
+          trader_name: t.trader_name || state.user.name
         });
         list.push(row);
         try { localStorage.setItem(LS_TRADES, JSON.stringify(list)); } catch (e) { /* storage unavailable */ }
@@ -206,7 +220,7 @@
     listOrders: function () { return Promise.resolve(demoStore.readOrders().filter(function (o) { return o.status === "open"; })); },
     placeOrder: function (o) {
       var list = demoStore.readOrders();
-      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, placed_low: o.placed_low || null, placed_high: o.placed_high || null, status: "open", trader_name: state.user.name, created_by: state.user.id });
+      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, kind: o.kind || "limit", note: o.note || null, placed_low: o.placed_low || null, placed_high: o.placed_high || null, status: "open", trader_name: o.trader_name || state.user.name, created_by: state.user.id });
       demoStore.writeOrders(list);
       return Promise.resolve();
     },
@@ -223,12 +237,37 @@
       var held = pf.positions.filter(function (p) { return p.code === o.code; })[0];
       if (o.side === "buy" && o.quantity * price > pf.cash + 0.005) return Promise.reject(new Error("Not enough cash for this order"));
       if (o.side === "sell" && (!held || held.qty < o.quantity)) return Promise.reject(new Error("The fund does not hold that many shares"));
-      return demoStore.addTrade({ type: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, price: price, note: "Limit order at " + fmtMoney(o.limit_price) })
+      return demoStore.addTrade({ type: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, price: price, trader_name: o.trader_name,
+        note: o.note || (o.kind === "market" ? "Market order placed while the market was closed" : "Limit order at " + fmtMoney(o.limit_price)) })
         .then(function () { demoStore.closeOrder(id, "filled"); });
     },
     signOut: function () { return Promise.resolve(); },
     listMembers: function () { return Promise.resolve([]); },
-    reset: function () { try { localStorage.removeItem(LS_TRADES); localStorage.removeItem(LS_ORDERS); } catch (e) { /* ignore */ } },
+    readList: function (key) { var v; try { v = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { v = null; } return v; },
+    writeList: function (key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+    listProposals: function () { state.proposalsOn = true; return Promise.resolve(demoStore.readList(LS_PROPOSALS) || []); },
+    addProposal: function (p) {
+      var list = demoStore.readList(LS_PROPOSALS) || [];
+      list.push(Object.assign({}, p, { id: list.length + 1, created_at: new Date().toISOString(), created_by: state.user.id, trader_name: state.user.name, status: "pending" }));
+      demoStore.writeList(LS_PROPOSALS, list);
+      return Promise.resolve();
+    },
+    decideProposal: function (id, status) {
+      var list = demoStore.readList(LS_PROPOSALS) || [];
+      list.forEach(function (x) { if (x.id === id) { x.status = status; x.decided_at = new Date().toISOString(); x.decided_name = state.user.name; } });
+      demoStore.writeList(LS_PROPOSALS, list);
+      return Promise.resolve();
+    },
+    listLevels: function () { state.levelsOn = true; return Promise.resolve(demoStore.readList(LS_LEVELS) || {}); },
+    saveLevel: function (code, target, stop) {
+      var map = demoStore.readList(LS_LEVELS) || {};
+      map[code] = { target: target, stop: stop };
+      demoStore.writeList(LS_LEVELS, map);
+      return Promise.resolve();
+    },
+    getReport: function (month) { var m = demoStore.readList(LS_REPORTS) || {}; return Promise.resolve({ month: month, comment: m[month] || "" }); },
+    saveReport: function (month, comment) { var m = demoStore.readList(LS_REPORTS) || {}; m[month] = comment; demoStore.writeList(LS_REPORTS, m); return Promise.resolve(); },
+    reset: function () { try { [LS_TRADES, LS_ORDERS, LS_PROPOSALS, LS_LEVELS, LS_REPORTS].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) { /* ignore */ } },
     // Fills the demo with a realistic starting portfolio at today's prices.
     seed: function () {
       var day = 86400000, now = Date.now();
@@ -249,6 +288,15 @@
           price: round2(info.price * (1 - (info.change_pct || 0) / 100)), brokerage: 0, cash_amount: null, note: row[4], trader_name: state.user.name });
       });
       try { localStorage.setItem(LS_TRADES, JSON.stringify(list)); localStorage.removeItem(LS_ORDERS); } catch (e) { /* storage unavailable */ }
+      // A sample analyst proposal and price levels, so the demo shows how they work.
+      var px = function (c) { return state.prices[c] && state.prices[c].price > 0 ? state.prices[c].price : 0; };
+      var pick = ["QAN", "WOW", "ALL", "GMG", "STO"].filter(function (c) { return px(c) > 0; })[0];
+      demoStore.writeList(LS_PROPOSALS, pick ? [{ id: 1, created_at: new Date(now - 3600000).toISOString(), created_by: "sample", trader_name: "Priya Nair (sample analyst)", side: "buy", code: pick, sleeve: "active",
+        quantity: Math.max(1, Math.floor(2000 / px(pick))), order_type: "market", limit_price: null, ref_price: px(pick), status: "pending",
+        rationale: "Earnings upgrade last week and the shares have not caught up. I would start with a small position in the active sleeve and add if the next update confirms it." }] : []);
+      var lv = {};
+      ["JBH", "XRO", "COH", "NST"].forEach(function (c, i) { if (px(c) > 0) lv[c] = { target: round2(px(c) * (i === 3 ? 1.012 : 1.18)), stop: round2(px(c) * 0.88) }; });
+      demoStore.writeList(LS_LEVELS, lv);
     }
   };
 
@@ -297,7 +345,7 @@
     },
     addTrade: function (t) {
       return sb.from("trades").insert(Object.assign({
-        type: t.type, code: t.code, sleeve: t.sleeve, quantity: t.quantity, price: t.price, note: t.note || null, trader_name: state.user.name
+        type: t.type, code: t.code, sleeve: t.sleeve, quantity: t.quantity, price: t.price, note: t.note || null, trader_name: t.trader_name || state.user.name
       }, t.approval ? { approval_code: t.approval } : {})).select().single().then(function (r) {
         if (r.error) throw new Error(r.error.message);
         return r.data;
@@ -312,13 +360,51 @@
           state.orderCheck = c && !c.error ? c.data : null;
           if (state.view === "trade") renderOpenOrders();
         }, function () { state.orderCheck = null; });
-        return r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); o.placed_low = Number(o.placed_low) || 0; o.placed_high = Number(o.placed_high) || 0; return o; });
+        var rows = r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); o.placed_low = Number(o.placed_low) || 0; o.placed_high = Number(o.placed_high) || 0; o.kind = o.kind || "limit"; return o; });
+        // Market orders can only wait for the open once the database has been given the column for it.
+        return sb.from("orders").select("kind").limit(1).then(function (k) { state.queueOff = !!k.error; return rows; }, function () { state.queueOff = true; return rows; });
+      });
+    },
+    listProposals: function () {
+      return sb.from("proposals").select("*").order("id", { ascending: false }).limit(40).then(function (r) {
+        if (r.error) { state.proposalsOn = false; return []; }
+        state.proposalsOn = true;
+        return r.data.map(function (x) { x.quantity = Number(x.quantity); x.limit_price = x.limit_price == null ? null : Number(x.limit_price); x.ref_price = Number(x.ref_price) || 0; return x; }).reverse();
+      });
+    },
+    addProposal: function (x) {
+      return sb.from("proposals").insert({ side: x.side, code: x.code, sleeve: x.sleeve, quantity: x.quantity, order_type: x.order_type, limit_price: x.limit_price, ref_price: x.ref_price, rationale: x.rationale, trader_name: state.user.name })
+        .then(function (r) { if (r.error) throw new Error(r.error.message); });
+    },
+    decideProposal: function (id, status) {
+      return sb.rpc("decide_proposal", { p_id: id, p_status: status, p_name: state.user.name }).then(function (r) { if (r.error) throw new Error(r.error.message); });
+    },
+    listLevels: function () {
+      return sb.from("position_levels").select("code, target, stop").then(function (r) {
+        if (r.error) { state.levelsOn = false; return {}; }
+        state.levelsOn = true;
+        var map = {};
+        r.data.forEach(function (d) { map[d.code] = { target: Number(d.target) || 0, stop: Number(d.stop) || 0 }; });
+        return map;
+      });
+    },
+    saveLevel: function (code, target, stop) {
+      return sb.from("position_levels").upsert({ code: code, target: target || null, stop: stop || null, updated_name: state.user.name }).then(function (r) { if (r.error) throw new Error(r.error.message); });
+    },
+    getReport: function (month) {
+      return sb.from("fund_reports").select("comment").eq("month", month).maybeSingle().then(function (r) {
+        return { month: month, comment: r.error || !r.data ? "" : r.data.comment || "", off: !!r.error };
+      });
+    },
+    saveReport: function (month, comment) {
+      return sb.from("fund_reports").upsert({ month: month, comment: comment, updated_name: state.user.name }).then(function (r) {
+        if (r.error) throw new Error(/fund_reports|schema cache|not find/i.test(r.error.message) ? "Saving the comment needs the latest database update to be run in Supabase first." : r.error.message);
       });
     },
     placeOrder: function (o) {
       var row = Object.assign({
-        side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, trader_name: state.user.name
-      }, o.approval ? { approval_code: o.approval } : {});
+        side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, trader_name: o.trader_name || state.user.name
+      }, o.approval ? { approval_code: o.approval } : {}, o.kind === "market" ? { kind: "market" } : {}, o.note && !state.queueOff ? { note: o.note } : {});
       var range = o.placed_low > 0 && o.placed_high > 0 ? { placed_low: o.placed_low, placed_high: o.placed_high } : null;
       var insert = function (extra) { return sb.from("orders").insert(Object.assign({}, row, extra || {})); };
       return insert(range).then(function (r) {
@@ -461,11 +547,16 @@
   function orderNumbers(order, info) {
     var limit = order.type === "limit" ? Number(order.limit) : 0;
     var isLimit = order.type === "limit";
-    var marketable = isLimit && limit > 0 && (order.side === "buy" ? limit >= info.price : limit <= info.price);
-    var pending = isLimit && !marketable;
-    var price = pending ? limit : info.price;
+    var q = quote(info, order.side);
+    var marketable = isLimit && limit > 0 && (order.side === "buy" ? limit >= q : limit <= q);
+    // Orders fill straight away only while the market is trading. A database that cannot hold
+    // market orders yet fills them at once, as before.
+    var live = fillsNow(info) || (!isLimit && (state.ordersOff || state.queueOff));
+    var pending = isLimit && (!marketable || !live);
+    var queued = !isLimit && !live;
+    var price = pending ? limit : q;
     var qty = order.qtyMode === "amount" ? (price > 0 ? Math.floor(Number(order.amount) / price) : 0) : Number(order.qty);
-    return { qty: qty || 0, price: price, limit: limit, isLimit: isLimit, pending: pending, marketable: marketable, value: (qty || 0) * price };
+    return { qty: qty || 0, price: price, limit: limit, isLimit: isLimit, pending: pending, queued: queued, waits: pending || queued, marketable: marketable, value: (qty || 0) * price };
   }
 
   // Checks an order against the fund's mandate. Returns a list of plain-language problems.
@@ -580,7 +671,7 @@
 
   // ---------- trade approval code ----------
   // Analysts need the fund manager's current code to place a trade. Fund managers trade without one.
-  function needsCode() { return !DEMO && canTrade() && !isAdmin(); }
+  function needsCode() { return !DEMO && canTrade() && !isAdmin() && !state.proposalsOn; }
   // The database's six-digit code is shown and typed as three words. Each pair of digits picks one word.
   var CODE_WORDS = "amber anchor arrow aspen atlas aurora autumn badger banner basalt beacon birch bishop bridge bronze canyon cedar cinder cobalt comet copper coral cove crane crimson delta dune eagle ember falcon fathom fern flint forest fox frost garnet glacier granite grove harbour hawk hazel heron horizon indigo iron island ivory jade jasper juniper keel kestrel lagoon lantern lark linen lotus lunar maple marble meadow mercury mist navy north oak ocean olive onyx opal orbit otter pearl pepper pilot pine quartz raven reef river saffron sage silver slate spruce storm summit tide timber topaz tundra velvet violet walnut willow winter yarrow zephyr".split(" ");
   function phraseFor(code) {
@@ -600,6 +691,12 @@
 
   function codeCardHtml() {
     if (!isAdmin()) return "";
+    if (state.proposalsOn) {
+      var w = pendingProposals().length;
+      return '<div class="card code-card"><div class="eyebrow light">Trade proposals</div><div class="code-digits">' + w + '<span class="code-unit">' + (w === 1 ? " waiting" : " waiting") + "</span></div>" +
+        '<p class="code-note">' + (w ? "Analysts have sent trades for you to approve or reject." : "Analysts send their trades to you with a short case. Nothing is placed until you approve it.") + "</p>" +
+        (w ? '<button type="button" class="btn ghost small-btn" data-view="trade" style="margin-top:12px">Review now</button>' : "") + "</div>";
+    }
     return '<div class="card code-card" id="code-card">' + codeCardInner() + "</div>";
   }
   function codeCardInner() {
@@ -637,12 +734,14 @@
   function renderChrome() {
     document.body.classList.toggle("auth-page", state.view === "signin");
 
-    var tabs = locked() ? [["home", "Home"], ["companies", "Companies"]] : [["home", "Home"], ["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
+    var tabs = locked() ? [["home", "Home"], ["companies", "Companies"]] : [["home", "Home"], ["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"], ["report", "Report"]];
     if (isAdmin() && !DEMO) tabs.push(["members", "Members"]);
+    var waiting = isAdmin() && state.proposalsOn && state.view !== "trade" ? pendingProposals().length : 0;
     var unseen = isAdmin() && state.view !== "members" ? unseenMembers().length : 0;
     $("#nav").innerHTML = tabs.map(function (t) {
       return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" + t[1] +
-        (t[0] === "members" && unseen ? '<span class="count" title="New members">' + unseen + "</span>" : "") + "</button>";
+        (t[0] === "members" && unseen ? '<span class="count" title="New members">' + unseen + "</span>" : "") +
+        (t[0] === "trade" && waiting ? '<span class="count" title="Proposals waiting for you">' + waiting + "</span>" : "") + "</button>";
     }).join("");
 
     var acc;
@@ -710,8 +809,7 @@
     var rows = pf.positions.map(function (p) {
       var over = false; // the limit applies to buying, so a holding that has grown past it is fine
       return "<tr>" +
-        '<td><span class="co">' + monoHtml(p.code, true) + '<span><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a><div class="muted small">' + esc(p.name) + "</div></span></span></td>" +
-        "<td>" + esc(sleeveLabel(p.sleeve)) + "</td>" +
+        '<td><span class="co">' + monoHtml(p.code, true) + '<span><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a> <span class="pill sleeve">' + esc(sleeveLabel(p.sleeve)) + '</span><div class="muted small">' + esc(p.name) + "</div></span></span></td>" + levelCell(p) +
         '<td class="num">' + fmtQty(p.qty) + "</td>" +
         '<td class="num">' + (p.priced ? fmtMoney(p.price) : "No price") + "</td>" +
         '<td class="num">' + fmtMoney(p.value) + "</td>" +
@@ -725,13 +823,16 @@
     if (CFG.MIN_ETF_VALUE > 0) checkList.push(["Index ETF at least " + fmtMoney(CFG.MIN_ETF_VALUE), invested ? pf.etfValue >= CFG.MIN_ETF_VALUE : null, fmtMoney(pf.etfValue)]);
     checkList.push(["No buying a stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0), invested ? true : null, "Largest is " + fmtPct(pf.maxWeight) + (pf.maxWeight > CFG.MAX_STOCK_WEIGHT ? " after price rises" : "")]);
     checkList.push(["Active sleeve within " + fmtMoney(CFG.ACTIVE_SLEEVE_CAP, 0), invested ? pf.activeValue <= CFG.ACTIVE_SLEEVE_CAP : null, fmtMoney(pf.activeValue) + " used"]);
+    var flagged = pf.positions.filter(function (p) { var f = levelFlag(p); return f && f.cls === "bad"; }).map(function (p) { return p.code; });
+    if (Object.keys(state.levels).some(function (c) { return state.levels[c].stop > 0 && pf.positions.some(function (p) { return p.code === c; }); }))
+      checkList.push(["Holdings above their review price", !flagged.length, flagged.length ? flagged.join(", ") + " needs a review" : "None has fallen to its review price"]);
     checkList.push(["Competition stocks in different sectors", pf.competitionCount > 0 ? pf.competitionSectors === pf.competitionCount : null, pf.competitionSectors + (pf.competitionSectors === 1 ? " sector across " : " sectors across ") + pf.competitionCount + (pf.competitionCount === 1 ? " stock" : " stocks")]);
     var checks = checkList.map(function (c) {
       var kind = c[1] === null ? "none" : c[1] ? "ok" : "bad";
       var word = c[1] === null ? "Nothing held yet" : c[1] ? "Within the limit" : "Breach";
       return '<li class="check ' + kind + '"><span class="check-icon">' + (kind === "ok" ? ICON.ok : kind === "bad" ? ICON.bad : ICON.dash) + "</span>" +
         '<span class="check-text"><span class="check-title">' + esc(c[0]) + '</span><span class="muted small">' + esc(c[1] === null ? word : c[2]) + "</span></span>" +
-        (kind === "bad" ? '<span class="pill bad">Breach</span>' : "") + "</li>";
+        (kind === "bad" ? '<span class="pill bad">' + (/review/.test(c[0]) ? "Review" : "Breach") + "</span>" : "") + "</li>";
     }).join("");
 
     var recent = state.trades.filter(function (t) { return t.type === "buy" || t.type === "sell"; }).slice(-5).reverse().map(function (t) {
@@ -764,15 +865,213 @@
       (pf.unpriced.length ? '<p class="notice">No price is available for ' + esc(pf.unpriced.join(", ")) + ", so the fund value is understated.</p>" : "") +
       '<div class="grid-2">' +
         '<div class="stack"><div class="card flush"><div class="card-head"><h2>Holdings</h2>' + (canTrade() ? '<button type="button" class="btn small-btn" data-view="trade">New trade</button>' : "") + "</div>" +
-          '<div class="table-scroll"><table><thead><tr><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
-          (rows || '<tr><td colspan="7" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
-        "</tbody></table></div></div>" + performanceCardHtml(perf) + sectorCardHtml(pf) + "</div>" +
+          '<div class="table-scroll"><table><thead><tr><th>Stock</th>' + (state.levelsOn ? '<th class="num">Target / review</th>' : "") + '<th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
+          (rows || '<tr><td colspan="8" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
+        "</tbody></table></div></div>" + performanceCardHtml(perf) + attributionCardHtml() + sectorCardHtml(pf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
-          '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" +
+          '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" + riskCardHtml(perf) +
           '<div class="card"><h2>Latest trades</h2>' + (recent ? '<ul class="recent">' + recent + "</ul>" : '<p class="muted small" style="margin:0">No trades yet.</p>') + "</div>" +
         "</div>" +
       "</div>";
     drawPerformance(perf);
+  }
+
+  // ---------- price targets and review levels ----------
+  function levelFlag(p) {
+    var lv = state.levels[p.code];
+    if (!lv || !p.priced) return null;
+    if (lv.stop > 0 && p.price <= lv.stop) return { cls: "bad", text: "Review" };
+    if (lv.target > 0 && p.price >= lv.target) return { cls: "ok", text: "Target reached" };
+    return null;
+  }
+  function levelCell(p) {
+    if (!state.levelsOn) return "";
+    var lv = state.levels[p.code] || {}, f = levelFlag(p), set = lv.target > 0 || lv.stop > 0;
+    return '<td class="num lvl">' + (set ? '<span class="nowrap">' + (lv.target > 0 ? fmtMoney(lv.target) : "None") + " / " + (lv.stop > 0 ? fmtMoney(lv.stop) : "None") + "</span>" : '<span class="muted">Not set</span>') +
+      (f ? '<div><span class="pill ' + f.cls + '">' + f.text + "</span></div>" : "") +
+      (canTrade() ? '<div><button type="button" class="link small" data-levels="' + esc(p.code) + '">' + (set ? "Change" : "Set") + "</button></div>" : "") + "</td>";
+  }
+  function closeLevels() { var el = $("#levels-modal"); if (el) el.remove(); }
+  function openLevels(code) {
+    closeLevels();
+    var info = state.prices[code], lv = state.levels[code] || {};
+    var el = document.createElement("div");
+    el.className = "modal";
+    el.id = "levels-modal";
+    el.dataset.code = code;
+    el.innerHTML =
+      '<div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="lvl-title">' +
+        '<h2 id="lvl-title">Target and review price for ' + esc(code) + "</h2>" +
+        '<p class="muted small">' + (info && info.price > 0 ? esc(code) + " is " + fmtMoney(info.price) + " now. " : "") + "The site flags the holding when either price is reached. Nothing is sold automatically.</p>" +
+        '<div class="field"><label for="lvl-target">Price target</label><div class="money-input"><span>$</span><input id="lvl-target" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Where you expect it to get to" value="' + (lv.target > 0 ? lv.target : "") + '"></div></div>' +
+        '<div class="field"><label for="lvl-stop">Review price</label><div class="money-input"><span>$</span><input id="lvl-stop" type="number" min="0" step="0.01" inputmode="decimal" placeholder="If it falls to here, the thesis is reviewed" value="' + (lv.stop > 0 ? lv.stop : "") + '"></div></div>' +
+        '<p class="small form-msg" id="lvl-msg"></p>' +
+        '<div class="modal-actions"><button type="button" class="btn secondary" data-action="levels-cancel">Cancel</button><button type="button" class="btn" data-action="levels-save">Save</button></div>' +
+      "</div>";
+    document.body.appendChild(el);
+    $("#lvl-target").focus();
+  }
+  function saveLevels() {
+    var el = $("#levels-modal");
+    if (!el) return;
+    var code = el.dataset.code, target = toNum($("#lvl-target").value), stop = toNum($("#lvl-stop").value);
+    if (target > 0 && stop > 0 && stop >= target) { $("#lvl-msg").innerHTML = '<p class="form-bad">The review price should be below the target.</p>'; return; }
+    store.saveLevel(code, target > 0 ? target : 0, stop > 0 ? stop : 0).then(function () { return store.listLevels(); })
+      .then(function (m) { state.levels = m; closeLevels(); toast("Saved for " + code); render(); })
+      .catch(function (e) { $("#lvl-msg").innerHTML = '<p class="form-bad">' + esc(e.message) + "</p>"; });
+  }
+
+  // ---------- attribution: what each stock added to or took off the fund ----------
+  function attribution() {
+    var by = {};
+    state.trades.forEach(function (t) {
+      if (!t.code) return;
+      var r = by[t.code] || (by[t.code] = { code: t.code, flow: 0, qty: 0 });
+      var v = (t.quantity || 0) * (t.price || 0);
+      if (t.type === "buy") { r.flow -= v + (t.brokerage || 0); r.qty += t.quantity; }
+      else if (t.type === "sell") { r.flow += v - (t.brokerage || 0); r.qty -= t.quantity; }
+      else if (t.type === "dividend") r.flow += t.cash_amount || 0;
+    });
+    return Object.keys(by).map(function (k) {
+      var r = by[k], info = state.prices[k], held = r.qty > 1e-9;
+      var pnl = r.flow + (held && info && info.price > 0 ? r.qty * info.price : 0);
+      return { code: k, name: info ? info.name : "", held: held, pnl: pnl, contrib: CFG.STARTING_CAPITAL > 0 ? pnl / CFG.STARTING_CAPITAL : 0 };
+    }).sort(function (a, b) { return b.pnl - a.pnl; });
+  }
+  function signedPct(n, dp) { return (n > 0 ? "+" : "") + fmtPct(n, dp == null ? 2 : dp); }
+  function attributionRows(list) {
+    var max = list.reduce(function (m, r) { return Math.max(m, Math.abs(r.contrib)); }, 0) || 1;
+    return list.map(function (r, i) {
+      var w = (Math.abs(r.contrib) / max * 50).toFixed(1);
+      return '<div class="attr-row"><span class="attr-label"><b>' + esc(r.code) + "</b>" + (r.held ? "" : ' <span class="muted small">sold</span>') + "</span>" +
+        '<span class="attr-track"><span class="attr-bar ' + (r.contrib >= 0 ? "pos" : "neg") + '" style="width:' + w + "%;--d:" + (i * 60) + 'ms"></span></span>' +
+        '<span class="attr-value ' + signClass(r.pnl) + '">' + signedPct(r.contrib) + '<span class="muted small"> ' + (r.pnl >= 0 ? "+" : "-") + whole(Math.abs(r.pnl)) + "</span></span></div>";
+    }).join("");
+  }
+  function attributionCardHtml() {
+    var list = attribution();
+    if (!list.length) return "";
+    var total = list.reduce(function (a, r) { return a + r.contrib; }, 0);
+    return '<div class="card"><div class="card-title-row"><h2>What drove the return</h2><span class="muted small">Each stock\'s share of the fund\'s ' + signedPct(total) + " return, including sold positions and dividends</span></div>" +
+      '<div class="attr">' + attributionRows(list) + "</div></div>";
+  }
+
+  // ---------- risk numbers, worked out from the daily history ----------
+  function riskStats(points) {
+    var MIN = 11;
+    if (!points || points.length < MIN) return { need: MIN - (points ? points.length : 0) };
+    var rf = [], rb = [], i;
+    for (i = 1; i < points.length; i++) { rf.push(points[i].fund / points[i - 1].fund - 1); rb.push(points[i].bench / points[i - 1].bench - 1); }
+    var mean = function (a) { return a.reduce(function (x, y) { return x + y; }, 0) / a.length; };
+    var sd = function (a) { var m = mean(a); return Math.sqrt(a.reduce(function (x, y) { return x + (y - m) * (y - m); }, 0) / (a.length - 1)); };
+    var mf = mean(rf), mb = mean(rb), cov = 0, vb = 0;
+    for (i = 0; i < rf.length; i++) { cov += (rf[i] - mf) * (rb[i] - mb); vb += (rb[i] - mb) * (rb[i] - mb); }
+    var peak = points[0].fund, dd = 0;
+    points.forEach(function (p) { peak = Math.max(peak, p.fund); dd = Math.min(dd, p.fund / peak - 1); });
+    var active = rf.map(function (x, k) { return x - rb[k]; });
+    return { days: points.length, vol: sd(rf) * Math.sqrt(252), te: sd(active) * Math.sqrt(252), beta: vb > 0 ? cov / vb : 0, dd: dd };
+  }
+  function riskItems(r) {
+    return [
+      ["Volatility", fmtPct(r.vol), "How much the fund's value swings, as a yearly rate"],
+      ["Worst fall", fmtPct(r.dd), "The biggest drop from a high point so far"],
+      ["Tracking error", fmtPct(r.te), "How far the fund strays from the index, as a yearly rate"],
+      ["Beta", r.beta.toFixed(2), "Above 1 means the fund moves more than the index"]
+    ];
+  }
+  function riskCardHtml(perf) {
+    var r = riskStats(perf.points);
+    if (!state.trades.some(function (t) { return t.type === "buy"; })) return "";
+    var body = r.need
+      ? '<p class="muted small" style="margin:0">Risk numbers need about two weeks of daily history. ' + r.need + " more trading " + (r.need === 1 ? "day" : "days") + " to go.</p>"
+      : '<div class="risk-grid">' + riskItems(r).map(function (x) { return '<div class="risk-item"><div class="eyebrow">' + x[0] + '</div><div class="risk-value">' + x[1] + '</div><div class="muted small">' + x[2] + "</div></div>"; }).join("") + "</div>";
+    return '<div class="card"><div class="card-title-row"><h2>Risk</h2><span class="muted small">' + (perf.sample ? "Sample history" : r.need ? "" : "From " + r.days + " trading days") + "</span></div>" + body + "</div>";
+  }
+
+  // ---------- monthly report ----------
+  function monthOf(iso) { var d = sydneyWallClock(iso); return d ? d.toISOString().slice(0, 7) : ""; }
+  function renderReport() {
+    var pf = computePortfolio(state.trades), perf = performancePoints(pf), pts = perf.points;
+    var today = sydneyToday(), month = today.slice(0, 7);
+    var monthName = new Date(month + "-01T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", month: "long", year: "numeric" });
+    var asAt = new Date(today + "T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
+    var gain = pf.total - CFG.STARTING_CAPITAL;
+    var vsIndex = null, mtd = null, mtdBench = null;
+    if (pts.length >= 2) {
+      var first = pts[0], last = pts[pts.length - 1];
+      vsIndex = (last.fund / first.fund - 1) - (last.bench / first.bench - 1);
+      var before = pts.filter(function (p) { return p.day < month + "-01"; }), inMonth = pts.filter(function (p) { return p.day >= month + "-01"; });
+      var base = before.length ? before[before.length - 1] : inMonth[0];
+      if (base && inMonth.length && base !== last) { mtd = last.fund / base.fund - 1; mtdBench = last.bench / base.bench - 1; }
+    }
+    var att = attribution(), best = att.length ? att[0] : null, worst = att.length > 1 ? att[att.length - 1] : null;
+    var risk = riskStats(pts);
+    var acts = state.trades.filter(function (t) { return t.type !== "deposit" && monthOf(t.created_at) === month; });
+    var buys = acts.filter(function (t) { return t.type === "buy"; }), sells = acts.filter(function (t) { return t.type === "sell"; });
+    var divs = acts.filter(function (t) { return t.type === "dividend"; }).reduce(function (a, t) { return a + (t.cash_amount || 0); }, 0);
+    var comment = state.report && state.report.month === month ? state.report.comment : "";
+
+    var kpi = function (label, value, sub, cls) { return '<div class="sheet-kpi"><div class="eyebrow">' + label + '</div><div class="sheet-kpi-value ' + (cls || "") + '">' + value + '</div><div class="muted small">' + sub + "</div></div>"; };
+    var by = {};
+    pf.positions.forEach(function (p) { var k = p.code === CFG.ETF_CODE ? "Index ETF" : (p.sector || "Other"); by[k] = (by[k] || 0) + p.value; });
+    if (pf.cash > 0.005) by.Cash = pf.cash;
+    var sectors = Object.keys(by).map(function (k) { return [k, by[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    var maxS = sectors.length ? sectors[0][1] : 1;
+
+    $("#main").innerHTML =
+      bandHtml("Investor report", monthName, "A one-page summary of the fund, built from the live record. Print it or save it as a PDF to send around.", [],
+        '<button type="button" class="btn" data-action="print-report">Print or save as PDF</button>' +
+        (isAdmin() ? '<button type="button" class="btn ghost" data-action="comment-open">' + (comment ? "Edit" : "Write") + " the manager's comment</button>" : "")) +
+      '<article class="card sheet">' +
+        '<header class="sheet-head"><div class="sheet-brand"><img class="sheet-logo dark-only" src="img/logo-mark-dark.png" alt="" width="52" height="47"><img class="sheet-logo print-only" src="img/logo-mark.png" alt="" width="52" height="47">' +
+          '<div><div class="sheet-name">The Lighthouse Fund</div><div class="muted small">An AFSA initiative · Macquarie University</div></div></div>' +
+          '<div class="sheet-date"><div class="sheet-title">Monthly report</div><div class="muted small">' + esc(monthName) + " · as at " + esc(asAt) + "</div></div></header>" +
+        '<div class="sheet-kpis">' +
+          kpi("Fund value", fmtMoney(pf.total), "Started with " + whole(CFG.STARTING_CAPITAL)) +
+          kpi("Since inception", signedPct(pf.ret), (gain >= 0 ? "+" : "-") + fmtMoney(Math.abs(gain)), signClass(pf.ret)) +
+          kpi("This month", mtd === null ? "Not yet" : signedPct(mtd), mtd === null ? "Needs daily history" : "Index " + signedPct(mtdBench), mtd === null ? "" : signClass(mtd)) +
+          kpi("Against the index", vsIndex === null ? "Not yet" : signedPct(vsIndex), vsIndex === null ? "Needs daily history" : (vsIndex >= 0 ? "Ahead of" : "Behind") + " the ASX 300 index ETF", vsIndex === null ? "" : signClass(vsIndex)) +
+        "</div>" +
+        '<div class="sheet-cols"><div class="sheet-col">' +
+          '<section><h3>Manager\'s comment</h3>' + (comment ? '<p class="sheet-comment">' + esc(comment).replace(/\n/g, "<br>") + "</p>" : '<p class="muted">' + (isAdmin() ? "No comment yet. Use the button above to write one for this month." : "No comment has been written for this month yet.") + "</p>") + "</section>" +
+          "<section><h3>Largest holdings</h3>" + (pf.positions.length ? '<table class="sheet-table"><thead><tr><th>Stock</th><th class="num">Weight</th><th class="num">Value</th><th class="num">Gain or loss</th></tr></thead><tbody>' +
+            pf.positions.slice(0, 6).map(function (p) { return "<tr><td><b>" + esc(p.code) + '</b> <span class="muted small">' + esc(p.name) + '</span></td><td class="num">' + fmtPct(p.weight) + '</td><td class="num">' + whole(p.value) + '</td><td class="num ' + signClass(p.gain) + '">' + signedPct(p.gainPct, 1) + "</td></tr>"; }).join("") +
+            "</tbody></table>" : '<p class="muted">The fund is all in cash.</p>') + "</section>" +
+          "<section><h3>What drove the return</h3>" + (att.length ? '<div class="attr">' + attributionRows(att.slice(0, 8)) + "</div>" : '<p class="muted">Nothing has been bought yet.</p>') + "</section>" +
+        '</div><div class="sheet-col">' +
+          "<section><h3>Where the money is</h3>" + '<div class="bars">' + sectors.map(function (r) {
+            return '<div class="bar-row"><span class="bar-label">' + esc(r[0]) + '</span><span class="bar-track"><span class="bar-fill' + (r[0] === "Cash" ? " cash" : "") + '" style="width:' + (r[1] / maxS * 100).toFixed(1) + '%"></span></span><span class="bar-value">' + fmtPct(pf.total > 0 ? r[1] / pf.total : 0) + "</span></div>";
+          }).join("") + "</div></section>" +
+          (best ? '<section><h3>Best and worst</h3><div class="sheet-pair">' +
+            '<div class="sheet-tile"><div class="eyebrow">Best</div><div class="sheet-tile-value">' + esc(best.code) + '</div><div class="small ' + signClass(best.pnl) + '">' + signedPct(best.contrib) + " of the fund</div></div>" +
+            (worst ? '<div class="sheet-tile"><div class="eyebrow">Worst</div><div class="sheet-tile-value">' + esc(worst.code) + '</div><div class="small ' + signClass(worst.pnl) + '">' + signedPct(worst.contrib) + " of the fund</div></div>" : "") + "</div></section>" : "") +
+          "<section><h3>Risk</h3>" + (risk.need ? '<p class="muted">Risk numbers appear after about two weeks of daily history.</p>'
+            : '<div class="sheet-risk">' + riskItems(risk).map(function (x) { return "<div><span>" + x[0] + "</span><b>" + x[1] + "</b></div>"; }).join("") + "</div>") + "</section>" +
+          "<section><h3>Activity this month</h3><p>" + buys.length + (buys.length === 1 ? " buy" : " buys") + ", " + sells.length + (sells.length === 1 ? " sell" : " sells") + (divs > 0 ? ", " + fmtMoney(divs) + " in dividends" : "") + ".</p>" +
+            (buys.length + sells.length ? '<ul class="sheet-acts">' + buys.concat(sells).sort(function (a, b) { return a.id - b.id; }).slice(-8).map(function (t) {
+              return "<li><b>" + (t.type === "buy" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " " + esc(t.code) + "</b> at " + fmtPrice(t.price) + ' <span class="muted small">' + esc(fmtDay(t.created_at)) + "</span></li>"; }).join("") + "</ul>" : "") + "</section>" +
+        "</div></div>" +
+        '<footer class="sheet-foot">The Lighthouse Fund is a simulated portfolio. No real money is invested and nothing in this report is financial advice. Prices are delayed by about 20 minutes.' + (perf.sample ? " Demo mode: the history behind these numbers is a sample." : "") + "</footer>" +
+      "</article>";
+  }
+  function closeComment() { var el = $("#comment-modal"); if (el) el.remove(); }
+  function openComment() {
+    closeComment();
+    var month = sydneyToday().slice(0, 7), el = document.createElement("div");
+    el.className = "modal";
+    el.id = "comment-modal";
+    el.innerHTML = '<div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="cm-title"><h2 id="cm-title">Manager\'s comment</h2>' +
+      '<p class="muted small">A few sentences on what happened this month and what you are watching. It appears on the report.</p>' +
+      '<div class="field"><label class="sr-only" for="report-comment">Comment</label><textarea id="report-comment" rows="7" maxlength="1200">' + esc(state.report && state.report.month === month ? state.report.comment : "") + "</textarea></div>" +
+      '<p class="small form-msg" id="cm-msg"></p>' +
+      '<div class="modal-actions"><button type="button" class="btn secondary" data-action="comment-cancel">Cancel</button><button type="button" class="btn" data-action="comment-save">Save</button></div></div>';
+    document.body.appendChild(el);
+    $("#report-comment").focus();
+  }
+  function saveComment() {
+    var month = sydneyToday().slice(0, 7), text = $("#report-comment").value.trim().slice(0, 1200);
+    store.saveReport(month, text).then(function () { state.report = { month: month, comment: text }; closeComment(); toast("Comment saved"); render(); })
+      .catch(function (e) { $("#cm-msg").innerHTML = '<p class="form-bad">' + esc(e.message) + "</p>"; });
   }
 
   // ---------- page band ----------
@@ -839,7 +1138,7 @@
       if (el.parentElement && el.parentElement.closest(".card")) return;
       el.classList.add("pre", "rise"); els.push(el);
     });
-    document.querySelectorAll("#main .bar-fill, #main #perf-chart").forEach(function (el) { el.classList.add("pre"); els.push(el); });
+    document.querySelectorAll("#main .bar-fill, #main .attr-bar, #main #perf-chart").forEach(function (el) { el.classList.add("pre"); els.push(el); });
     document.querySelectorAll("#main .home-hero, #main .hero").forEach(function (el) { el.classList.add("pre", "fade-in"); });
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
@@ -1029,9 +1328,10 @@
     var free = brokerageFor(1000) === 0;
     var tradePf = computePortfolio(state.trades);
     $("#main").innerHTML =
-      bandHtml("Order desk", "Trade", esc(pricesStamp()) + ". Market orders fill straight away at the price shown" + (free ? ", with no brokerage" : "") + ".", [
+      bandHtml("Order desk", "Trade", esc(pricesStamp()) + ". Market orders fill while the ASX is open" + (SPREAD > 0 ? ", " + fmtPct(SPREAD, 1) + " away from the quoted price like a real buy and sell spread" : "") + ". Outside trading hours they wait for the next open." + (free ? " No brokerage." : ""), [
         ["Cash available", whole(tradePf.cash)], ["Fund value", whole(tradePf.total)],
         ["Open orders", String(state.orders.length)], ["Market", marketOpen() ? "Open" : "Closed", marketOpen() ? "up" : ""]]) +
+      '<div id="proposals"></div>' +
       '<div class="grid-trade">' +
         '<div class="card flush"><div class="card-pad">' +
           '<div class="seg" role="group" aria-label="Buy or sell">' +
@@ -1046,11 +1346,13 @@
       '<div id="open-orders"></div>';
     renderTicket();
     renderOpenOrders();
+    renderProposals();
   }
 
   function orderCheckText() {
     var c = state.orderCheck;
-    if (DEMO || !c || !c.checked_at) return "Checked against the low and high of each trading day whenever the site is open.";
+    if (DEMO) return "Checked whenever this page refreshes. In demo mode, Fill now skips the wait.";
+    if (!c || !c.checked_at) return "Checked against the low and high of each trading day whenever the site is open.";
     if (c.ok === false) return "The last automatic check at " + fmtDate(c.checked_at) + " did not work: " + (c.note || "unknown problem") + ".";
     return "Checked automatically every 5 minutes, 9am to 7pm Sydney time. Last check " + fmtDate(c.checked_at) + ".";
   }
@@ -1059,15 +1361,16 @@
     var el = $("#open-orders");
     if (!el) return;
     if (!state.orders.length) { el.innerHTML = ""; return; }
-    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open limit orders</h2><span class="muted small">' + esc(orderCheckText()) + '</span></div>' +
+    el.innerHTML = '<div class="card flush" style="margin-top:16px"><div class="card-head"><h2>Open orders</h2><span class="muted small">' + esc(orderCheckText()) + '</span></div>' +
       '<div class="table-scroll"><table><thead><tr><th>Placed</th><th>Order</th><th>Stock</th><th class="num">Quantity</th><th class="num">Limit</th><th class="num">Price now</th><th class="num">Day range</th><th>By</th><th class="num"></th></tr></thead><tbody>' +
       state.orders.map(function (o) {
         var info = state.prices[o.code];
         var mine = isAdmin() || (state.user && o.created_by === state.user.id);
         return '<tr><td class="nowrap">' + esc(fmtDate(o.created_at)) + '</td><td><span class="pill ' + o.side + '">' + (o.side === "buy" ? "Buy" : "Sell") + "</span></td>" +
-          '<td class="code">' + esc(o.code) + '</td><td class="num">' + fmtQty(o.quantity) + '</td><td class="num">' + fmtMoney(o.limit_price) + "</td>" +
+          '<td class="code">' + esc(o.code) + '</td><td class="num">' + fmtQty(o.quantity) + '</td><td class="num">' + (o.kind === "market" ? '<span class="pill">Market, at the open</span>' : fmtMoney(o.limit_price)) + "</td>" +
           '<td class="num">' + (info && info.price > 0 ? fmtMoney(info.price) : "No price") + '</td><td class="num nowrap">' + (info && tradedToday(info) && info.day_low > 0 ? fmtMoney(info.day_low) + " to " + fmtMoney(info.day_high) : "") + '</td><td class="nowrap">' + esc(o.trader_name || "") + "</td>" +
-          '<td class="num">' + (mine ? '<button type="button" class="btn secondary small-btn" data-cancel-order="' + esc(o.id) + '">Cancel</button>' : "") + "</td></tr>";
+          '<td class="num">' + (DEMO && info && info.price > 0 ? '<button type="button" class="btn secondary small-btn" data-fill-order="' + esc(o.id) + '" title="Demo mode only">Fill now</button> ' : "") +
+            (mine ? '<button type="button" class="btn secondary small-btn" data-cancel-order="' + esc(o.id) + '">Cancel</button>' : "") + "</td></tr>";
       }).join("") + "</tbody></table></div></div>";
   }
 
@@ -1100,9 +1403,11 @@
         '<span class="mini-seg" role="group" aria-label="Order type"><button type="button" data-otype="market" aria-pressed="' + (o.type !== "limit") + '">At market</button><button type="button" data-otype="limit" aria-pressed="' + (o.type === "limit") + '">Limit</button></span></div>' +
         (o.type === "limit"
           ? '<div class="money-input"><span>$</span><input id="limit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="' + info.price.toFixed(2) + '" value="' + esc(o.limit) + '"></div>'
-          : '<div class="static-field">' + fmtMoney(info.price) + ' <span class="muted small">current price, fills straight away</span></div>') + "</div>" +
+          : '<div class="static-field">' + fmtPrice(quote(info, o.side)) + ' <span class="muted small">' + (SPREAD > 0 ? (o.side === "buy" ? "buy" : "sell") + " price, " + fmtPct(SPREAD, 1) + (o.side === "buy" ? " above" : " below") + " the quote" : "current price") +
+            (fillsNow(info) || state.queueOff || state.ordersOff ? ", fills straight away" : ". Market closed: fills at the next open") + "</span></div>") + "</div>" +
       sleeveField +
       (needsCode() ? '<div class="field"><label for="approval">Codephrase from the fund manager</label><input id="approval" class="code-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" placeholder="three words, for example amber harbour beacon" value="' + esc(o.approval) + '"><div class="muted small" style="margin-top:5px">Every trade goes through the fund manager. Ask them for the current three-word codephrase. It changes every 5 minutes.</div></div>' : "") +
+      (needsProposal() ? '<div class="field"><label for="rationale">Your case for this trade</label><textarea id="rationale" rows="3" maxlength="600" placeholder="Why this stock, why now, and what would change your mind.">' + esc(o.rationale) + '</textarea><div class="muted small" style="margin-top:5px">This goes to the Fund Manager, who approves or rejects the trade. Nothing is placed until then.</div></div>' : "") +
       '<div id="calc"></div>';
     renderCalc();
   }
@@ -1123,26 +1428,31 @@
     var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
     var issues = typed || (n.isLimit && o.limit !== "") ? validateOrder(o, pf) : [];
     if (!typed) issues = issues.filter(function (i) { return /limit/i.test(i); });
-    var ok = typed && qty > 0 && !issues.length && !state.busy && (!needsCode() || !!codeFromPhrase(o.approval));
+    var proposing = needsProposal();
+    var ok = typed && qty > 0 && !issues.length && !state.busy && (!needsCode() || !!codeFromPhrase(o.approval)) && (!proposing || o.rationale.trim().length >= 10);
     var limitNote = "";
     if (n.isLimit && n.limit > 0) {
       limitNote = n.pending
-        ? "This order waits until " + info.code + " trades at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ", including at any point during the day. You can cancel it before then."
-        : "The price is already " + (o.side === "buy" ? "at or below" : "at or above") + " your limit, so this fills straight away at " + fmtMoney(info.price) + ".";
+        ? (n.marketable ? "The market is closed, so this waits for the next session and fills at " + fmtMoney(n.limit) + " or better. You can cancel it before then."
+          : "This order waits until " + info.code + " trades at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ", including at any point during the day. You can cancel it before then.")
+        : "The price is already " + (o.side === "buy" ? "at or below" : "at or above") + " your limit, so this fills straight away at " + fmtPrice(n.price) + ".";
+    } else if (n.queued) {
+      limitNote = "The ASX is closed. This order waits and fills at the price when trading starts again, which may differ from the price shown. You can cancel it before then.";
     }
+    var waitWord = n.pending ? "Place limit order: " : n.queued ? "Queue for the open: " : "";
 
     el.innerHTML =
       '<div class="summary">' +
         "<div><span>Currently held</span><span>" + fmtQty(held ? held.qty : 0) + " shares</span></div>" +
-        "<div><span>Shares in this order</span><span>" + fmtQty(qty) + " at " + fmtMoney(n.price) + "</span></div>" +
+        "<div><span>Shares in this order</span><span>" + fmtQty(qty) + " at " + fmtPrice(n.price) + "</span></div>" +
         (brokerageFor(1000) > 0 ? "<div><span>Brokerage</span><span>" + fmtMoney(brokerage) + "</span></div>" : "") +
-        '<div class="total"><span>' + (o.side === "buy" ? (n.pending ? "Cost if filled" : "Total cost") : (n.pending ? "Cash if filled" : "Cash received")) + "</span><span>" + fmtMoney(total) + "</span></div>" +
+        '<div class="total"><span>' + (o.side === "buy" ? (n.pending ? "Cost if filled" : n.queued ? "Estimated cost" : "Total cost") : (n.pending ? "Cash if filled" : n.queued ? "Estimated cash" : "Cash received")) + "</span><span>" + fmtMoney(total) + "</span></div>" +
         "<div><span>Cash after</span><span>" + fmtMoney(cashAfter) + "</span></div>" +
       "</div>" +
       (limitNote ? '<p class="muted small" style="margin:-4px 0 12px">' + esc(limitNote) + "</p>" : "") +
       (issues.length ? '<ul class="issues">' + issues.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>" : "") +
       '<button type="button" class="btn block ' + (o.side === "sell" ? "sell" : "buy") + '" data-action="submit-order"' + (ok ? "" : " disabled") + ">" +
-        (state.busy ? "Placing order…" : (n.pending ? "Place limit order: " : "") + (o.side === "buy" ? (n.pending ? "buy " : "Buy ") : (n.pending ? "sell " : "Sell ")) + (qty > 0 ? fmtQty(qty) + " " : "") + esc(info.code)) + "</button>";
+        (state.busy ? (proposing ? "Sending…" : "Placing order…") : (proposing ? "Send to the Fund Manager: " : waitWord) + (o.side === "buy" ? (proposing || waitWord ? "buy " : "Buy ") : (proposing || waitWord ? "sell " : "Sell ")) + (qty > 0 ? fmtQty(qty) + " " : "") + esc(info.code)) + "</button>";
   }
 
   // One tile per sector: how many companies, how the sector moved today, and what the fund holds in it.
@@ -1472,6 +1782,7 @@
     else if (state.view === "trade") renderTrade();
     else if (state.view === "companies") renderCompanies();
     else if (state.view === "history") renderHistory();
+    else if (state.view === "report") renderReport();
     else if (state.view === "members") renderMembers();
     else if (state.view === "profile") renderProfile();
     else if (state.view === "signin") renderSignin();
@@ -1506,6 +1817,9 @@
       locked() ? (state.trades = [], state.orders = [], state.snapshots = [], null) : store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); }),
       locked() ? null : store.listOrders().then(function (o) { state.orders = o; }).catch(function () { state.orders = []; }),
       locked() ? null : store.listSnapshots().then(function (h) { state.snapshots = h; }).catch(function () { state.snapshots = []; }),
+      locked() ? (state.proposals = [], state.levels = {}, null) : store.listProposals().then(function (l) { state.proposals = l; }).catch(function () { state.proposals = []; state.proposalsOn = false; }),
+      locked() ? null : store.listLevels().then(function (m) { state.levels = m; }).catch(function () { state.levels = {}; state.levelsOn = false; }),
+      locked() ? null : store.getReport(sydneyToday().slice(0, 7)).then(function (r) { state.report = r; }).catch(function () { state.report = { month: sydneyToday().slice(0, 7), comment: "" }; }),
       // The fund manager's member list, so the Members tab can flag new sign-ups.
       isAdmin() && !DEMO ? store.listMembers().then(function (m) {
         state.members = m;
@@ -1521,6 +1835,7 @@
         $("#universe").innerHTML = universeRows();
         if (state.order.code) renderCalc();
         renderOpenOrders();
+        renderProposals();
       } else if (state.view === "companies" && $("#companies")) {
         renderChrome();
         $("#sector-tiles").innerHTML = sectorTilesHtml();
@@ -1538,6 +1853,41 @@
     state.order.amount = "";
     state.order.limit = "";
     state.order.approval = "";
+    state.order.rationale = "";
+  }
+
+  // Places an order that has already passed the checks. It becomes a trade straight away, or
+  // waits as an open order when the market is closed or the limit has not been reached.
+  // Resolves with a short message saying what happened.
+  function executeOrder(o, opts) {
+    opts = opts || {};
+    var info = state.prices[o.code];
+    var pf = computePortfolio(state.trades);
+    var n = orderNumbers(o, info);
+    var qty = n.qty;
+    var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
+    var sleeve = info.code === CFG.ETF_CODE ? "index" : o.side === "sell" && held ? held.sleeve : o.sleeve;
+    var verb = o.side === "buy" ? "Buy" : "Sell";
+    if (n.waits) {
+      return store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.queued ? n.price : n.limit, kind: n.queued ? "market" : "limit",
+        approval: opts.approval || "", trader_name: opts.trader_name, note: opts.note, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0 })
+        .then(function () { return store.listOrders(); })
+        .then(function (list) {
+          state.orders = list;
+          return n.queued ? "Order queued for the open: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code : "Limit order placed: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit);
+        });
+    }
+    return store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: n.price, note: opts.note || "", approval: opts.approval || "", trader_name: opts.trader_name })
+      .then(function () { return store.listTrades(); })
+      .then(function (t) { state.trades = t; return verb + " order filled: " + fmtQty(qty) + " " + info.code + " at " + fmtPrice(n.price); });
+  }
+
+  // The words for the box that asks someone to confirm an order.
+  function orderConfirmText(o) {
+    var info = state.prices[o.code], n = orderNumbers(o, info), verb = o.side === "buy" ? "Buy" : "Sell";
+    if (n.pending) return { title: "Place this limit order?", body: verb + " " + fmtQty(n.qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there while the market is open, and can be cancelled before then.", ok: "Place order" };
+    if (n.queued) return { title: "Queue this order for the open?", body: verb + " " + fmtQty(n.qty) + " " + info.code + ". The market is closed, so it fills at the price when trading starts again. That may differ from the " + fmtPrice(n.price) + " shown now. You can cancel it before then.", ok: "Queue order" };
+    return { title: verb + " " + fmtQty(n.qty) + " " + info.code + " at " + fmtPrice(n.price) + "?", body: "This is recorded permanently and cannot be undone.", ok: verb + " " + info.code };
   }
 
   function submitOrder() {
@@ -1546,55 +1896,91 @@
     var pf = computePortfolio(state.trades);
     var issues = validateOrder(o, pf);
     if (issues.length) { renderCalc(); return; }
-    var n = orderNumbers(o, info);
-    var qty = n.qty;
-    var isEtf = info.code === CFG.ETF_CODE;
-    var held = pf.positions.filter(function (p) { return p.code === info.code; })[0];
-    var sleeve = isEtf ? "index" : o.side === "sell" && held ? held.sleeve : o.sleeve;
-    var verb = o.side === "buy" ? "Buy" : "Sell";
-    var approval = needsCode() ? codeFromPhrase(o.approval) : "";
-
-    if (n.pending) {
-      confirmBox("Place this limit order?", verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there and can be cancelled before then.", "Place order").then(function (ok) {
+    if (needsProposal()) return submitProposal();
+    var text = orderConfirmText(o);
+    confirmBox(text.title, text.body, text.ok).then(function (ok) {
       if (!ok) return;
       state.busy = true;
       renderCalc();
-      store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.limit, approval: approval, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0 })
-        .then(function () { return store.listOrders(); })
-        .then(function (list) {
-          state.busy = false;
-          state.orders = list;
-          clearTicket();
-          toast("Limit order placed: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit));
-          render();
-        })
-        .catch(function (e) { state.busy = false; renderCalc(); toast("Order not placed: " + e.message); });
-      });
-      return;
-    }
-
-    confirmBox(verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(info.price) + "?", "This is recorded permanently and cannot be undone.", verb + " " + info.code).then(function (ok) {
-    if (!ok) return;
-    state.busy = true;
-    renderCalc();
-    store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: info.price, note: "", approval: approval })
-      .then(function () {
+      executeOrder(o, { approval: needsCode() ? codeFromPhrase(o.approval) : "" }).then(function (msg) {
         state.busy = false;
         clearTicket();
-        toast(verb + " order filled: " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(info.price));
-        return store.listTrades();
-      })
-      .then(function (t) {
-        state.trades = t;
-        var stillHeld = computePortfolio(t).positions.some(function (p) { return p.code === state.order.code; });
+        toast(msg);
+        var stillHeld = computePortfolio(state.trades).positions.some(function (p) { return p.code === state.order.code; });
         if (state.order.side === "sell" && !stillHeld) state.order.code = null;
         render();
-      })
-      .catch(function (e) {
-        state.busy = false;
-        renderCalc();
-        toast("Order not placed: " + e.message);
-      });
+      }).catch(function (e) { state.busy = false; renderCalc(); toast("Order not placed: " + e.message); });
+    });
+  }
+
+  // ---------- trade proposals ----------
+  // An analyst sends a trade with a short case. The fund manager approves or rejects it.
+  function needsProposal() { return canTrade() && !isAdmin() && state.proposalsOn; }
+  function pendingProposals() { return state.proposals.filter(function (x) { return x.status === "pending"; }); }
+  function proposalOrder(x) {
+    return { code: x.code, side: x.side, qtyMode: "shares", qty: String(x.quantity), amount: "", type: x.order_type === "limit" ? "limit" : "market", limit: x.limit_price ? String(x.limit_price) : "", sleeve: x.sleeve };
+  }
+  function reloadProposals() { return store.listProposals().then(function (list) { state.proposals = list; }); }
+  function submitProposal() {
+    var o = state.order, info = state.prices[o.code], n = orderNumbers(o, info);
+    var verb = o.side === "buy" ? "buy" : "sell";
+    var held = computePortfolio(state.trades).positions.filter(function (p) { return p.code === info.code; })[0];
+    var sleeve = info.code === CFG.ETF_CODE ? "index" : o.side === "sell" && held ? held.sleeve : o.sleeve;
+    state.busy = true;
+    renderCalc();
+    store.addProposal({ side: o.side, code: info.code, sleeve: sleeve, quantity: n.qty, order_type: n.isLimit ? "limit" : "market", limit_price: n.isLimit ? n.limit : null, ref_price: info.price, rationale: o.rationale.trim().slice(0, 600) })
+      .then(reloadProposals)
+      .then(function () { state.busy = false; clearTicket(); toast("Sent to the Fund Manager: " + verb + " " + fmtQty(n.qty) + " " + info.code); render(); })
+      .catch(function (e) { state.busy = false; renderCalc(); toast("Not sent: " + e.message); });
+  }
+  function proposalLine(x) {
+    return (x.side === "buy" ? "Buy " : "Sell ") + fmtQty(x.quantity) + " " + x.code + (x.order_type === "limit" && x.limit_price ? " at a limit of " + fmtMoney(x.limit_price) : " at market");
+  }
+  function renderProposals() {
+    var el = $("#proposals");
+    if (!el) return;
+    if (!state.proposalsOn || !canTrade()) { el.innerHTML = ""; return; }
+    var admin = isAdmin();
+    var list = admin ? pendingProposals() : state.proposals.filter(function (x) { return state.user && x.created_by === state.user.id; }).slice(-6).reverse();
+    if (!list.length) {
+      el.innerHTML = admin ? '<div class="card proposal-empty"><h2>Trade proposals</h2><p class="muted" style="margin:0">Nothing is waiting for you. When an analyst proposes a trade it appears here for you to approve or reject.</p></div>' : "";
+      return;
+    }
+    el.innerHTML = '<div class="card flush"><div class="card-head"><h2>' + (admin ? "Proposals waiting for you" : "Your proposals") + '</h2><span class="muted small">' +
+      (admin ? "Approving places the order at the current price. Rejecting records nothing." : "The Fund Manager approves or rejects each one.") + "</span></div>" +
+      '<div class="proposal-list">' + list.map(function (x) {
+        var info = state.prices[x.code], est = info && info.price > 0 ? x.quantity * (x.order_type === "limit" && x.limit_price ? x.limit_price : quote(info, x.side)) : 0;
+        var status = x.status === "pending" ? '<span class="pill">Waiting</span>' : x.status === "approved" ? '<span class="pill ok">Approved</span>' : '<span class="pill bad">Rejected</span>';
+        return '<div class="proposal"><div class="proposal-main">' +
+          '<div class="proposal-top"><span class="pill ' + x.side + '">' + (x.side === "buy" ? "Buy" : "Sell") + '</span><b>' + esc(proposalLine(x).replace(/^(Buy|Sell) /, "")) + "</b>" +
+            (est ? '<span class="muted small">about ' + fmtMoney(est) + " · " + esc(sleeveLabel(x.sleeve)) + "</span>" : "") + (admin ? "" : status) + "</div>" +
+          '<p class="proposal-case">' + esc(x.rationale || "") + "</p>" +
+          '<div class="muted small">' + esc(x.trader_name || "") + ", " + esc(fmtDate(x.created_at)) + (x.ref_price > 0 ? " · " + esc(x.code) + " was " + fmtMoney(x.ref_price) + (info && info.price > 0 ? ", now " + fmtMoney(info.price) : "") : "") + "</div></div>" +
+          (admin ? '<div class="proposal-actions"><button type="button" class="btn buy small-btn" data-approve="' + esc(x.id) + '">Approve</button><button type="button" class="btn secondary small-btn danger" data-reject="' + esc(x.id) + '">Reject</button></div>' : "") + "</div>";
+      }).join("") + "</div></div>";
+  }
+  function approveProposal(id) {
+    var x = state.proposals.filter(function (r) { return String(r.id) === String(id) && r.status === "pending"; })[0];
+    if (!x) return;
+    var o = proposalOrder(x), info = state.prices[x.code];
+    if (!info || !(info.price > 0)) return toast("No price is available for " + x.code + " right now.");
+    var issues = validateOrder(o, computePortfolio(state.trades));
+    if (issues.length) return toast("Cannot approve: " + issues[0]);
+    var text = orderConfirmText(o);
+    confirmBox("Approve: " + proposalLine(x).toLowerCase() + "?", "Proposed by " + (x.trader_name || "an analyst") + ". " + text.body, "Approve").then(function (ok) {
+      if (!ok) return;
+      executeOrder(o, { trader_name: x.trader_name, note: ("Proposed by " + (x.trader_name || "an analyst") + ", approved by " + state.user.name + ": " + (x.rationale || "")).slice(0, 240) })
+        .then(function (msg) { return store.decideProposal(x.id, "approved").then(function () { return msg; }); })
+        .then(function (msg) { return reloadProposals().then(function () { toast("Approved. " + msg); render(); }); })
+        .catch(function (e) { toast("Not approved: " + e.message); });
+    });
+  }
+  function rejectProposal(id) {
+    var x = state.proposals.filter(function (r) { return String(r.id) === String(id) && r.status === "pending"; })[0];
+    if (!x) return;
+    confirmBox("Reject this proposal?", proposalLine(x) + ", proposed by " + (x.trader_name || "an analyst") + ". Nothing is recorded as a trade.", "Reject", true).then(function (ok) {
+      if (!ok) return;
+      store.decideProposal(x.id, "rejected").then(reloadProposals).then(function () { toast("Proposal rejected"); render(); }).catch(function (e) { toast("Not rejected: " + e.message); });
     });
   }
 
@@ -1622,6 +2008,9 @@
     });
   }
 
+  // True when a price is from today's session (sample prices in demo mode count as live).
+  function liveToday(info) { return tradedToday(info) || (DEMO && state.pricesAreSample && !!info); }
+  function fillsNow(info) { return marketOpen() && liveToday(info); }
   function sydneyToday() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date()); }
   // True when the feed's low and high are from today's session, not left over from the last one.
   function tradedToday(info) { return !!info && info.trade_date === sydneyToday(); }
@@ -1633,7 +2022,10 @@
   function fillPriceFor(o, info) {
     if (!info || !(info.price > 0)) return 0;
     var buy = o.side === "buy";
-    if (buy ? info.price <= o.limit_price : info.price >= o.limit_price) return info.price;
+    // A market order that was placed while the market was closed fills once it is trading again.
+    if (o.kind === "market") return fillsNow(info) ? quote(info, o.side) : 0;
+    if (!liveToday(info)) return 0;
+    if (fillsNow(info) && (buy ? info.price <= o.limit_price : info.price >= o.limit_price)) return info.price;
     if (!tradedToday(info)) return 0;
     var extreme = buy ? info.day_low : info.day_high;
     if (!(extreme > 0) || (buy ? extreme > o.limit_price : extreme < o.limit_price)) return 0;
@@ -1664,7 +2056,7 @@
     return due.reduce(function (chain, o) {
       return chain.then(function () {
         var price = o.fillAt;
-        return store.fillOrder(o.id, price).then(function () { filled.push((o.side === "buy" ? "bought " : "sold ") + fmtQty(o.quantity) + " " + o.code + " at " + fmtMoney(price)); }, function () { /* stays open, tried again next refresh */ });
+        return store.fillOrder(o.id, price).then(function () { filled.push((o.side === "buy" ? "bought " : "sold ") + fmtQty(o.quantity) + " " + o.code + " at " + fmtPrice(price)); }, function () { /* stays open, tried again next refresh */ });
       });
     }, Promise.resolve()).then(function () {
       return Promise.all([store.listTrades(), store.listOrders()]);
@@ -1672,7 +2064,7 @@
       filling = false;
       state.trades = r[0];
       state.orders = r[1];
-      if (filled.length) toast("Limit order filled: " + filled.join(", "));
+      if (filled.length) toast("Order filled: " + filled.join(", "));
     }).catch(function () { filling = false; });
   }
 
@@ -1888,7 +2280,7 @@
 
   // ---------- events ----------
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector]");
+    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector],[data-approve],[data-reject],[data-fill-order],[data-levels]");
     if (!t) return;
     if (t.dataset.view) { e.preventDefault(); return go(t.dataset.view); }
     if (t.dataset.side) {
@@ -1908,9 +2300,21 @@
     if (t.dataset.hist) { state.histFilter = t.dataset.hist; return renderHistory(); }
     if (t.dataset.qtymode) { state.order.qtyMode = t.dataset.qtymode; renderTicket(); var f1 = $(state.order.qtyMode === "amount" ? "#amount" : "#qty"); if (f1) f1.focus(); return; }
     if (t.dataset.otype) { state.order.type = t.dataset.otype; renderTicket(); var f2 = $("#limit"); if (f2) f2.focus(); return; }
+    if (t.dataset.approve) return approveProposal(t.dataset.approve);
+    if (t.dataset.reject) return rejectProposal(t.dataset.reject);
+    if (t.dataset.levels) return openLevels(t.dataset.levels);
+    if (t.dataset.fillOrder) {
+      var fo = state.orders.filter(function (x) { return String(x.id) === t.dataset.fillOrder; })[0], fi = fo && state.prices[fo.code];
+      if (!fo || !fi) return;
+      var fp = fo.kind === "market" ? quote(fi, fo.side) : fo.limit_price;
+      store.fillOrder(fo.id, fp).then(function () { return Promise.all([store.listTrades(), store.listOrders()]); })
+        .then(function (r) { state.trades = r[0]; state.orders = r[1]; toast("Order filled: " + fo.code + " at " + fmtPrice(fp)); render(); })
+        .catch(function (err) { toast("Not filled: " + err.message); });
+      return;
+    }
     if (t.dataset.cancelOrder) {
       var oid = Number(t.dataset.cancelOrder);
-      confirmBox("Cancel this limit order?", "It is taken off the open orders list. Nothing is recorded as a trade.", "Cancel order", true).then(function (ok) {
+      confirmBox("Cancel this order?", "It is taken off the open orders list. Nothing is recorded as a trade.", "Cancel order", true).then(function (ok) {
         if (!ok) return;
         t.disabled = true;
         store.cancelOrder(oid).then(function () { return store.listOrders(); }).then(function (list) { state.orders = list; renderOpenOrders(); toast("Order cancelled"); })
@@ -1945,6 +2349,12 @@
     else if (a === "export") exportExcel();
     else if (a === "dividend-open") openDividend();
     else if (a === "dividend-cancel") closeDividend();
+    else if (a === "levels-cancel") closeLevels();
+    else if (a === "levels-save") saveLevels();
+    else if (a === "print-report") window.print();
+    else if (a === "comment-open") openComment();
+    else if (a === "comment-cancel") closeComment();
+    else if (a === "comment-save") saveComment();
     else if (a === "dividend-save") saveDividend();
     else if (a === "signout") store.signOut().then(function () { state.user = null; state.trades = []; state.orders = []; state.snapshots = []; state.orderCheck = null; state.view = "home"; render(); });
     else if (a === "pick-avatar") $("#avatar-file").click();
@@ -1997,6 +2407,7 @@
     else if (id === "qty") { state.order.qty = e.target.value; renderCalc(); }
     else if (id === "amount") { state.order.amount = e.target.value; renderCalc(); }
     else if (id === "limit") { state.order.limit = e.target.value; renderCalc(); }
+    else if (id === "rationale") { state.order.rationale = e.target.value; renderCalc(); }
     else if (id === "approval") { state.order.approval = e.target.value; renderCalc(); }
   });
 
@@ -2039,5 +2450,5 @@
     });
 
   // Exposed for automated tests.
-  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor, phraseFor: phraseFor, codeFromPhrase: codeFromPhrase };
+  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor, phraseFor: phraseFor, codeFromPhrase: codeFromPhrase, attribution: attribution, riskStats: riskStats, orderNumbers: orderNumbers, quote: quote };
 })();

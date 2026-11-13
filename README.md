@@ -5,7 +5,11 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 ## What it does
 
 - **Portfolio**: fund value, return since inception, holdings, allocation and mandate checks.
-- **Trade**: search the stock list and buy or sell. Orders fill straight away at the latest delayed price.
+- **Trade**: search the stock list and buy or sell. Market orders fill while the ASX is open, 0.1% away from the delayed price (`SPREAD` in `js/config.js`, matched by `v_spread` in the database). Outside trading hours they wait as open orders and fill at the next open.
+- **Proposals**: an analyst sends a trade with a short case and the Fund Manager approves or rejects it on the Trade page. This replaces the codephrase once `supabase/update-2026-11-13g.sql` has been run; until then the codephrase is used.
+- **Targets and review prices**: set per holding on the Portfolio page. The site flags a holding when either is reached.
+- **Attribution and risk**: the Portfolio page shows what each stock added to the return, and volatility, worst fall, tracking error and beta once there are about two weeks of daily history.
+- **Report**: a one-page monthly report built from the live record, with a manager's comment. Print it or save it as a PDF.
 - **Companies**: every company in the feed, each linked to its profile on Market Index.
 - **History**: a permanent record of every trade, with who placed it and when, and an Excel download.
 - **Approval code**: analysts need the Fund Manager's three-word codephrase to place a trade (the site turns the database's six-digit code into three words and back). It changes every 5 minutes, only the Fund Manager can see it, and the database checks it.

@@ -20,6 +20,7 @@ window.LIGHTHOUSE_CONFIG = {
   MAX_STOCK_WEIGHT: 0.15,
   MIN_ETF_VALUE: 0, // set to 40000 to bring back the index ETF floor
   ACTIVE_SLEEVE_CAP: 30000,
+  SPREAD: 0.001, // market buys fill 0.1% above the quoted price and sells 0.1% below (the database update must match)
   PRICE_REFRESH_SECONDS: 120,
 
   // Home page. A short thesis for a stock the fund holds, shown on its card, for example
