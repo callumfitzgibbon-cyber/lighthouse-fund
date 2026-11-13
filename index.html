@@ -3,12 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The Lighthouse Fund</title>
+  <title>The Lighthouse Fund · AFSA at Macquarie University</title>
+  <meta name="description" content="The Lighthouse Fund is a simulated student investment fund run by AFSA at Macquarie University. See the portfolio, every trade and how it is tracking against the ASX.">
+  <meta name="theme-color" content="#16181d">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="The Lighthouse Fund">
+  <meta property="og:title" content="The Lighthouse Fund">
+  <meta property="og:description" content="A simulated student investment fund run by AFSA at Macquarie University.">
+  <meta property="og:url" content="https://lighthousefund.netlify.app/">
+  <meta property="og:image" content="https://lighthousefund.netlify.app/img/share.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="apple-touch-icon" href="img/favicon.png">
   <link rel="icon" type="image/png" href="img/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=20261113p">
+  <link rel="stylesheet" href="css/styles.css?v=20261113q">
 </head>
 <body>
   <div class="strip"><div class="wrap strip-inner" id="strip"></div></div>
@@ -16,7 +28,7 @@
   <header class="top">
     <div class="wrap top-inner">
       <a class="brand" href="#" data-view="portfolio" aria-label="The Lighthouse Fund, home">
-        <img src="img/logo-mark.png?v=20261113p" alt="" width="46" height="41">
+        <img src="img/logo-mark.png?v=20261113q" alt="" width="46" height="41">
         <span>
           <span class="brand-name">Lighthouse <em>Fund</em></span>
           <span class="brand-sub">An AFSA initiative · Macquarie University</span>
@@ -30,18 +42,42 @@
   <div id="banner"></div>
   <main id="main" class="wrap" tabindex="-1"><p class="muted">Loading…</p></main>
 
-  <footer class="wrap foot">
-    <p>The Lighthouse Fund is a simulated student portfolio run by AFSA for educational purposes. No real money is invested. Nothing shown here is financial advice or a recommendation to buy or sell any security. Prices are delayed.</p>
-    <p id="demo-link" hidden><button type="button" class="link" data-action="enter-demo">Try demo mode</button> to test trades without touching the real fund.</p>
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <div class="foot-brand">
+        <img src="img/logo-mark.png?v=20261113q" alt="" width="40" height="36">
+        <div>
+          <div class="foot-name">The Lighthouse Fund</div>
+          <div class="foot-sub">A simulated student investment fund run by AFSA at Macquarie University.</div>
+        </div>
+      </div>
+      <div class="foot-col">
+        <div class="foot-head">The fund</div>
+        <a href="#" data-view="portfolio">Portfolio</a>
+        <a href="#" data-view="companies">Companies</a>
+        <a href="#" data-view="history">Trade history</a>
+      </div>
+      <div class="foot-col">
+        <div class="foot-head">Contact</div>
+        <a href="mailto:secretary.muafs@gmail.com">secretary.muafs@gmail.com</a>
+        <span>Macquarie University, Sydney</span>
+        <span id="demo-link" hidden><button type="button" class="link" data-action="enter-demo">Try demo mode</button></span>
+      </div>
+    </div>
+    <div class="wrap foot-legal">
+      <p>No real money is invested. Nothing shown here is financial advice or a recommendation to buy or sell any security. Prices are delayed by about 20 minutes.</p>
+      <p>© 2026 AFSA, Macquarie University.</p>
+    </div>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="js/vendor/supabase.js"></script>
-  <script src="js/config.js?v=20261113p"></script>
-  <script src="js/demo-data.js?v=20261113p"></script>
-  <script src="js/charter.js?v=20261113p"></script>
-  <script src="js/xlsx-lite.js?v=20261113p"></script>
-  <script src="js/app.js?v=20261113p"></script>
+  <script src="js/config.js?v=20261113q"></script>
+  <script src="js/demo-data.js?v=20261113q"></script>
+  <script src="js/charter.js?v=20261113q"></script>
+  <script src="js/xlsx-lite.js?v=20261113q"></script>
+  <script src="js/chart.js?v=20261113q"></script>
+  <script src="js/app.js?v=20261113q"></script>
 </body>
 </html>

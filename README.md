@@ -12,6 +12,7 @@ A paper-trading app for the AFSA Lighthouse Fund, a simulated student-run portfo
 - **Charter**: the full charter (`js/charter.js`) is shown on the sign-up form. New members scroll to the end and tick to agree, and the date is recorded.
 - **Order types**: order by number of shares or by dollar amount (rounded down to whole shares), at the market price or at a limit price. Limit orders wait in an open-orders list and fill when the price, or the day's low or high from the price feed (`day_low`, `day_high`, `trade_date` columns), has reached the limit. The check runs whenever a fund manager or analyst has the site open. With `supabase/update-2026-11-13c.sql` run, the database also checks by itself every five minutes from 9am to 7pm Sydney time (pg_cron plus the http extension reading the price feed), so no tab needs to be open.
 - **Dividends**: a fund manager records a dividend from the History page by its cents per share. The site works out the amount and either keeps it as cash or reinvests it in the same stock (`supabase/update-2026-11-13d.sql` restricts this to fund managers).
+- **Performance chart**: the Portfolio page charts the fund against the same money left in the index ETF. `supabase/update-2026-11-13e.sql` makes the database save the fund's value each trading day (`fund_snapshots`). Demo mode draws a sample history.
 - **Removing accounts**: a fund manager can remove an account from the Members page. That person's trades stay on the record under their name.
 - **Profile**: each member can change their name, photo, email and password.
 - **Members**: the Fund Manager sets who can trade. Roles are Fund Manager, Analyst and Viewer (stored in the database as `admin`, `trader` and `viewer`).
@@ -51,7 +52,7 @@ Then open http://localhost:8000.
 
 ## Going live
 
-1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it, then do the same with `supabase/update-2026-11-12.sql`, `supabase/update-2026-11-13.sql`, `supabase/update-2026-11-13b.sql`, `supabase/update-2026-11-13c.sql` and `supabase/update-2026-11-13d.sql`. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
+1. **Database.** Create a free project at supabase.com. Open the SQL editor, paste in `supabase/schema.sql` and run it, then do the same with `supabase/update-2026-11-12.sql`, `supabase/update-2026-11-13.sql`, `supabase/update-2026-11-13b.sql`, `supabase/update-2026-11-13c.sql`, `supabase/update-2026-11-13d.sql` and `supabase/update-2026-11-13e.sql`. Copy the project URL and the anon public key into `js/config.js`. The anon key is designed to be public. Never put the service role key in this repository.
 2. **First admin.** Create your account in the app, then run this in the Supabase SQL editor with your email:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';

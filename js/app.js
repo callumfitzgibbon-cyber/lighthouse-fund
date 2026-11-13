@@ -161,6 +161,7 @@
       var w = Math.floor(Date.now() / 300000);
       return Promise.resolve({ code: ("000000" + ((w * 7919 + 104729) * 2654435761 % 1000000)).slice(-6), expires: (w + 1) * 300000 });
     },
+    listSnapshots: function () { return Promise.resolve([]); },
     listTrades: function () {
       var list;
       try { list = JSON.parse(localStorage.getItem(LS_TRADES) || "null"); } catch (e) { list = null; }
@@ -270,6 +271,12 @@
             // Only ask for the charter once the database has the column for it.
             needsCharter: Object.prototype.hasOwnProperty.call(p, "charter_agreed_at") && !p.charter_agreed_at };
         });
+      });
+    },
+    // One row per trading day, saved by the database: the fund's value and the index ETF's price.
+    listSnapshots: function () {
+      return sb.from("fund_snapshots").select("day, fund_value, benchmark_price").order("day", { ascending: true }).then(function (r) {
+        return r.error ? [] : r.data.map(function (d) { return { day: d.day, fund: Number(d.fund_value), price: Number(d.benchmark_price) }; });
       });
     },
     listTrades: function () {
@@ -681,6 +688,7 @@
     var gain = pf.total - CFG.STARTING_CAPITAL;
     var biggest = pf.positions[0];
 
+    var perf = performancePoints(pf);
     var rows = pf.positions.map(function (p) {
       var over = false; // the limit applies to buying, so a holding that has grown past it is fine
       return "<tr>" +
@@ -737,15 +745,63 @@
       "</div>" +
       (pf.unpriced.length ? '<p class="notice">No price is available for ' + esc(pf.unpriced.join(", ")) + ", so the fund value is understated.</p>" : "") +
       '<div class="grid-2">' +
-        '<div class="card flush"><div class="card-head"><h2>Holdings</h2>' + (canTrade() ? '<button type="button" class="btn small-btn" data-view="trade">New trade</button>' : "") + "</div>" +
+        '<div class="stack"><div class="card flush"><div class="card-head"><h2>Holdings</h2>' + (canTrade() ? '<button type="button" class="btn small-btn" data-view="trade">New trade</button>' : "") + "</div>" +
           '<div class="table-scroll"><table><thead><tr><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
           (rows || '<tr><td colspan="7" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
-        "</tbody></table></div></div>" +
+        "</tbody></table></div></div>" + performanceCardHtml(perf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" +
           '<div class="card"><h2>Latest trades</h2>' + (recent ? '<ul class="recent">' + recent + "</ul>" : '<p class="muted small" style="margin:0">No trades yet.</p>') + "</div>" +
         "</div>" +
       "</div>";
+    drawPerformance(perf);
+  }
+
+  // ---------- performance chart ----------
+  // The fund's value each trading day beside the same money left in the index ETF.
+  function performancePoints(pf) {
+    var etf = state.prices[CFG.ETF_CODE], today = sydneyToday();
+    if (DEMO) {
+      // Demo mode has no saved history, so it draws a sample one that ends at today's value.
+      if (!pf.positions.length) return { points: [], sample: true };
+      var n = 60, pts = [], seed = 7, rnd = function () { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+      var f = 0, b = 0, fs = [0], bs = [0];
+      for (var i = 1; i < n; i++) { var mkt = rnd() * 0.007; f += mkt + rnd() * 0.003; b += mkt; fs.push(f); bs.push(b); }
+      var endF = pf.total / CFG.STARTING_CAPITAL - 1, endB = endF - 0.011;
+      var d = new Date(today + "T00:00:00Z"), days = [];
+      while (days.length < n) { if (d.getUTCDay() % 6 !== 0) days.unshift(d.toISOString().slice(0, 10)); d = new Date(d.getTime() - 86400000); }
+      for (var k = 0; k < n; k++) {
+        var w = k / (n - 1);
+        pts.push({ day: days[k], fund: CFG.STARTING_CAPITAL * (1 + fs[k] - fs[n - 1] * w + endF * w), bench: CFG.STARTING_CAPITAL * (1 + bs[k] - bs[n - 1] * w + endB * w) });
+      }
+      return { points: pts, sample: true };
+    }
+    var rows = (state.snapshots || []).filter(function (r) { return r.fund > 0 && r.price > 0; });
+    // Today's point follows the live prices on screen.
+    if (rows.length && !state.pricesAreSample && etf && etf.price > 0 && tradedToday(etf)) {
+      rows = rows.filter(function (r) { return r.day < today; }).concat([{ day: today, fund: pf.total, price: etf.price }]);
+    }
+    if (!rows.length) return { points: [], sample: false };
+    var base = rows[0];
+    return { points: rows.map(function (r) { return { day: r.day, fund: r.fund, bench: base.fund * r.price / base.price }; }), sample: false };
+  }
+  function performanceCardHtml(perf) {
+    var S = window.LighthouseChart.series, pts = perf.points, body;
+    if (pts.length >= 2) {
+      var last = pts[pts.length - 1], first = pts[0], diff = (last.fund / first.fund - 1) - (last.bench / first.bench - 1);
+      body = '<div class="chart-legend">' + S.map(function (s) { return '<span><i style="background:' + s.color + '"></i>' + esc(s.name) + "</span>"; }).join("") +
+        '<span class="chart-gap">' + (Math.abs(diff) < 0.00005 ? "Level with the index" : fmtPct(Math.abs(diff)) + (diff > 0 ? " ahead of" : " behind") + " the index") + " since " + esc(new Date(first.day + "T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" })) + "</span></div>" +
+        '<div id="perf-chart"></div>';
+    } else {
+      body = '<div class="chart-empty"><svg viewBox="0 0 240 70" width="240" height="70" aria-hidden="true"><path d="M4 58 C40 50 60 54 92 40 S150 34 178 20 S220 16 236 8" fill="none" stroke="#d5d8de" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round"/></svg>' +
+        "<p><strong>The chart starts soon.</strong><br>The fund's value is saved at the end of each trading day. Once there are two days on record, this shows the fund against the ASX 300 index ETF.</p></div>";
+    }
+    return '<div class="card"><div class="card-title-row"><h2>Performance</h2><span class="muted small">' +
+      (perf.sample && perf.points.length ? "Sample history for the demo" : "Fund value against the same money left in " + esc(CFG.ETF_CODE)) + "</span></div>" + body + "</div>";
+  }
+  function drawPerformance(perf) {
+    var host = $("#perf-chart");
+    if (host && perf.points.length >= 2) window.LighthouseChart.render(host, perf.points);
   }
 
   function statCard(label, value, sub) {
@@ -1202,6 +1258,7 @@
       loadPrices(),
       store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); }),
       store.listOrders().then(function (o) { state.orders = o; }).catch(function () { state.orders = []; }),
+      store.listSnapshots().then(function (h) { state.snapshots = h; }).catch(function () { state.snapshots = []; }),
       // The fund manager's member list, so the Members tab can flag new sign-ups.
       isAdmin() && !DEMO ? store.listMembers().then(function (m) {
         state.members = m;
@@ -1248,7 +1305,8 @@
     var approval = needsCode() ? o.approval : "";
 
     if (n.pending) {
-      if (!window.confirm("Place a limit order to " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + "?")) return;
+      confirmBox("Place this limit order?", verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there and can be cancelled before then.", "Place order").then(function (ok) {
+      if (!ok) return;
       state.busy = true;
       renderCalc();
       store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.limit, approval: approval, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0 })
@@ -1261,10 +1319,12 @@
           render();
         })
         .catch(function (e) { state.busy = false; renderCalc(); toast("Order not placed: " + e.message); });
+      });
       return;
     }
 
-    if (!window.confirm(verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(info.price) + "?\n\nThis is recorded permanently and cannot be undone.")) return;
+    confirmBox(verb + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(info.price) + "?", "This is recorded permanently and cannot be undone.", verb + " " + info.code).then(function (ok) {
+    if (!ok) return;
     state.busy = true;
     renderCalc();
     store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: info.price, note: "", approval: approval })
@@ -1285,6 +1345,31 @@
         renderCalc();
         toast("Order not placed: " + e.message);
       });
+    });
+  }
+
+  // A styled yes or no box in place of the browser's own pop-up. Resolves true or false.
+  function confirmBox(title, body, okLabel, danger) {
+    return new Promise(function (resolve) {
+      var old = $("#confirm-modal"); if (old) old.remove();
+      var el = document.createElement("div");
+      el.className = "modal";
+      el.id = "confirm-modal";
+      el.innerHTML = '<div class="modal-box confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">' +
+        '<h2 id="confirm-title">' + esc(title) + "</h2>" + (body ? '<p class="muted">' + esc(body) + "</p>" : "") +
+        '<div class="modal-actions"><button type="button" class="btn secondary" data-confirm="no">Cancel</button>' +
+        '<button type="button" class="btn' + (danger ? " danger-solid" : "") + '" data-confirm="yes">' + esc(okLabel || "Confirm") + "</button></div></div>";
+      var done = function (v) { document.removeEventListener("keydown", onKey); el.remove(); resolve(v); };
+      var onKey = function (e) { if (e.key === "Escape") done(false); };
+      el.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-confirm]");
+        if (b) { e.stopPropagation(); done(b.dataset.confirm === "yes"); }
+        else if (e.target === el) done(false);
+      });
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(el);
+      el.querySelector('[data-confirm="yes"]').focus();
+    });
   }
 
   function sydneyToday() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date()); }
@@ -1568,22 +1653,26 @@
     if (t.dataset.otype) { state.order.type = t.dataset.otype; renderTicket(); var f2 = $("#limit"); if (f2) f2.focus(); return; }
     if (t.dataset.cancelOrder) {
       var oid = Number(t.dataset.cancelOrder);
-      if (!window.confirm("Cancel this limit order?")) return;
-      t.disabled = true;
-      store.cancelOrder(oid).then(function () { return store.listOrders(); }).then(function (list) { state.orders = list; renderOpenOrders(); toast("Order cancelled"); })
-        .catch(function (err) { t.disabled = false; toast("Not cancelled: " + err.message); });
+      confirmBox("Cancel this limit order?", "It is taken off the open orders list. Nothing is recorded as a trade.", "Cancel order", true).then(function (ok) {
+        if (!ok) return;
+        t.disabled = true;
+        store.cancelOrder(oid).then(function () { return store.listOrders(); }).then(function (list) { state.orders = list; renderOpenOrders(); toast("Order cancelled"); })
+          .catch(function (err) { t.disabled = false; toast("Not cancelled: " + err.message); });
+      });
       return;
     }
     if (t.dataset.removeMember) {
       var rid = t.dataset.removeMember;
       var who = state.members.filter(function (m) { return m.id === rid; })[0] || {};
-      if (!window.confirm("Remove " + (who.display_name || who.email || "this account") + "?\n\nTheir login is deleted and they lose access. Trades they placed stay on the record under their name. This cannot be undone.")) return;
-      t.disabled = true;
+      confirmBox("Remove " + (who.display_name || who.email || "this account") + "?", "Their login is deleted and they lose access. Trades they placed stay on the record under their name. This cannot be undone.", "Remove account", true).then(function (ok) {
+        if (!ok) return;
+        t.disabled = true;
       store.removeMember(rid).then(function () {
         state.members = state.members.filter(function (m) { return m.id !== rid; });
         toast("Account removed");
         if (state.view === "members") render();
       }).catch(function (err) { t.disabled = false; toast("Not removed: " + err.message); });
+      });
       return;
     }
     if (t.dataset.trade) {
@@ -1615,11 +1704,11 @@
     }
     else if (a === "enter-demo") setDemo(true);
     else if (a === "seed-demo") {
-      if (window.confirm("Replace the demo trades with a sample portfolio?")) { demoStore.seed(); state.order.code = null; refreshAll().then(function () { go("portfolio"); toast("Sample portfolio loaded"); }); }
+      confirmBox("Load the sample portfolio?", "This replaces the demo trades in this browser. The real fund is not touched.", "Load sample").then(function (ok) { if (ok) { demoStore.seed(); state.order.code = null; refreshAll().then(function () { go("portfolio"); toast("Sample portfolio loaded"); }); } });
     }
     else if (a === "exit-demo") setDemo(false);
     else if (a === "reset-demo") {
-      if (window.confirm("Clear all demo trades and start again with " + fmtMoney(CFG.STARTING_CAPITAL) + "?")) { demoStore.reset(); refreshAll(); }
+      confirmBox("Start the demo again?", "This clears all demo trades and goes back to " + fmtMoney(CFG.STARTING_CAPITAL) + " in cash.", "Start again", true).then(function (ok) { if (ok) { demoStore.reset(); refreshAll(); } });
     } else if (a === "toggle-signup") {
       signupMode = !signupMode;
       renderSignin();
