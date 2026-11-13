@@ -56,9 +56,9 @@
     }
     SERIES.slice().reverse().forEach(function (s) {
       var d = points.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p[s.key]).toFixed(1); }).join(" ");
-      el("path", { d: d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      el("path", { d: d, class: "chart-line", pathLength: 1, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
       var last = points.length - 1;
-      el("circle", { cx: x(last), cy: y(points[last][s.key]), r: 4, fill: s.color, stroke: "#fff", "stroke-width": 2 }, svg);
+      el("circle", { cx: x(last), cy: y(points[last][s.key]), r: 4, class: "chart-end", fill: s.color, stroke: "#fff", "stroke-width": 2 }, svg);
     });
 
     // Hover: a hairline snaps to the nearest day and one tooltip lists both series.

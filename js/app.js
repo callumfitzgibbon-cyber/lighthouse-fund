@@ -18,6 +18,7 @@
 
   var state = {
     view: "home",
+    animateNext: true,
     user: null, // { id, email, name, role }
     trades: [],
     prices: {}, // code -> { code, name, sector, price, change_pct, market_cap, excluded }
@@ -698,7 +699,7 @@
         '<td class="num">' + (p.priced ? fmtMoney(p.price) : "No price") + "</td>" +
         '<td class="num">' + fmtMoney(p.value) + "</td>" +
         '<td class="num ' + signClass(p.gain) + '">' + fmtMoney(p.gain) + '<div class="small">' + fmtPct(p.gainPct) + "</div></td>" +
-        '<td class="num">' + fmtPct(p.weight) + (over ? '<div><span class="pill bad">Over limit</span></div>' : "") + "</td>" +
+        '<td class="num">' + fmtPct(p.weight) + '<span class="wbar"><span style="width:' + Math.min(100, p.weight * 100).toFixed(1) + '%"></span></span></td>' +
         "</tr>";
     }).join("");
 
@@ -726,7 +727,7 @@
       '<section class="hero">' +
         '<div class="hero-main">' +
           '<div class="eyebrow">Fund value</div>' +
-          '<div class="hero-value">' + fmtMoney(pf.total) + "</div>" +
+          '<div class="hero-value" data-count="' + pf.total + '">' + fmtMoney(pf.total) + "</div>" +
           '<div class="hero-sub"><span class="delta ' + (signClass(pf.ret) || "flat") + '">' + (pf.ret > 0 ? "+" : "") + fmtPct(pf.ret, 2) + "</span>" +
             "<span>" + (gain >= 0 ? "+" : "") + fmtMoney(gain) + " since inception</span></div>" +
           '<div class="hero-foot">Started with ' + fmtMoney(CFG.STARTING_CAPITAL) + ". " + pricesStamp() + ".</div>" +
@@ -748,13 +749,83 @@
         '<div class="stack"><div class="card flush"><div class="card-head"><h2>Holdings</h2>' + (canTrade() ? '<button type="button" class="btn small-btn" data-view="trade">New trade</button>' : "") + "</div>" +
           '<div class="table-scroll"><table><thead><tr><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
           (rows || '<tr><td colspan="7" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
-        "</tbody></table></div></div>" + performanceCardHtml(perf) + "</div>" +
+        "</tbody></table></div></div>" + performanceCardHtml(perf) + sectorCardHtml(pf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" +
           '<div class="card"><h2>Latest trades</h2>' + (recent ? '<ul class="recent">' + recent + "</ul>" : '<p class="muted small" style="margin:0">No trades yet.</p>') + "</div>" +
         "</div>" +
       "</div>";
     drawPerformance(perf);
+  }
+
+  // ---------- small visuals ----------
+  // A moving strip of prices: what the fund holds first, then the day's biggest movers.
+  function tickerHtml(pf) {
+    var seen = {}, items = [];
+    var add = function (p) { if (p && p.price > 0 && !seen[p.code]) { seen[p.code] = true; items.push(p); } };
+    pf.positions.forEach(function (h) { add(state.prices[h.code]); });
+    state.priceList.slice().sort(function (a, b) { return Math.abs(b.change_pct) - Math.abs(a.change_pct); }).slice(0, 14).forEach(add);
+    if (items.length < 4) return "";
+    var row = items.map(function (p) {
+      var c = p.change_pct;
+      return '<span class="tick"><b>' + esc(p.code) + "</b> " + fmtMoney(p.price) + ' <i class="' + (c > 0 ? "up" : c < 0 ? "down" : "") + '">' + (c > 0 ? "▲ " : c < 0 ? "▼ " : "") + Math.abs(c).toFixed(2) + "%</i></span>";
+    }).join("");
+    return '<div class="ticker" aria-hidden="true"><div class="ticker-track" style="animation-duration:' + (items.length * 3.200).toFixed(0) + 's">' + row + row + "</div></div>";
+  }
+  // Where the money sits, by sector, as horizontal bars.
+  function sectorCardHtml(pf) {
+    var by = {};
+    pf.positions.forEach(function (p) { var k = p.code === CFG.ETF_CODE ? "Index ETF" : (p.sector || "Other"); by[k] = (by[k] || 0) + p.value; });
+    if (pf.cash > 0.005) by.Cash = pf.cash;
+    var list = Object.keys(by).map(function (k) { return [k, by[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    if (!pf.positions.length) return "";
+    var max = list[0][1] || 1;
+    return '<div class="card"><h2>Where the money is</h2><div class="bars">' + list.map(function (r, i) {
+      return '<div class="bar-row"><span class="bar-label">' + esc(r[0]) + '</span><span class="bar-track"><span class="bar-fill' + (r[0] === "Cash" ? " cash" : "") + '" style="width:' + (r[1] / max * 100).toFixed(1) + "%;--d:" + (i * 60) + 'ms"></span></span><span class="bar-value">' + fmtPct(pf.total > 0 ? r[1] / pf.total : 0) + "</span></div>";
+    }).join("") + "</div></div>";
+  }
+  // The day's biggest rises and falls, shown on the Trade page until a stock is chosen.
+  function moversHtml() {
+    var list = state.priceList.filter(function (p) { return p.price > 0 && p.code !== CFG.ETF_CODE; });
+    if (list.length < 8) return "";
+    var by = list.slice().sort(function (a, b) { return b.change_pct - a.change_pct; });
+    var col = function (title, rows) {
+      return '<div><div class="eyebrow">' + title + "</div>" + rows.map(function (p) {
+        return '<button type="button" class="mover" data-code="' + esc(p.code) + '"><span><b>' + esc(p.code) + '</b><span class="muted small">' + esc(p.name) + '</span></span><span class="num ' + signClass(p.change_pct) + '">' + (p.change_pct > 0 ? "+" : "") + p.change_pct.toFixed(2) + "%</span></button>";
+      }).join("") + "</div>";
+    };
+    return '<div class="movers">' + col("Biggest rises today", by.slice(0, 4)) + col("Biggest falls today", by.slice(-4).reverse()) + "</div>";
+  }
+  // Runs the entrance effects once after moving to a page, not on every background refresh.
+  function playMotion() {
+    if (!state.animateNext) return;
+    state.animateNext = false;
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var els = [];
+    document.querySelectorAll("#main .card, #main .reveal").forEach(function (el) {
+      if (el.parentElement && el.parentElement.closest(".card")) return;
+      el.classList.add("pre", "rise"); els.push(el);
+    });
+    document.querySelectorAll("#main .bar-fill, #main #perf-chart").forEach(function (el) { el.classList.add("pre"); els.push(el); });
+    document.querySelectorAll("#main .home-hero, #main .hero").forEach(function (el) { el.classList.add("pre", "fade-in"); });
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); } });
+      }, { threshold: 0.08 });
+      els.forEach(function (el) { io.observe(el); });
+    } else { els.forEach(function (el) { el.classList.add("in"); }); }
+    document.querySelectorAll("#main [data-count]").forEach(function (el) {
+      var end = Number(el.dataset.count), t0 = null;
+      if (!(end > 0)) return;
+      var step = function (t) {
+        if (!el.isConnected) return;
+        if (t0 === null) t0 = t;
+        var k = Math.min(1, (t - t0) / 1100), e = 1 - Math.pow(1 - k, 3);
+        el.textContent = fmtMoney(end * e);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // ---------- home page ----------
@@ -768,18 +839,22 @@
     var stocks = pf.positions.filter(function (p) { return p.qty > 0; });
     var theses = CFG.THESES || {}, team = CFG.TEAM || [];
 
+    var pillarIcons = [
+      '<path d="M4 19V10M10 19V5M16 19v-7M22 19H2" />',
+      '<path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.500 7-10V6l-7-3ZM9 12l2.200 2.200L15.500 10" />',
+      '<path d="M7 3h7l5 5v13H7V3ZM14 3v5h5M10 13h6M10 17h6" />'
+    ];
     var pillars = [
       ["Australian shares only", "The fund invests in companies in the S&P/ASX 300 and an ASX 300 index ETF. No short selling, borrowing or derivatives."],
-      ["Run by students", "Analysts research companies and make the case for each trade. The Fund Manager signs off every order before it goes through."],
-      ["Limits that hold", "No buy can take a single stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + " of the fund, and the site checks every order against the mandate."],
+      ["Limits that hold", "No buy can take a single stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + " of the fund, and every order is checked against the mandate and signed off by the Fund Manager."],
       ["Everything on the record", "Every trade is kept permanently with who placed it and when. Nothing can be edited or deleted afterwards."]
     ].map(function (c, i) {
-      return '<div class="card pillar"><div class="pillar-num">' + ("0" + (i + 1)) + "</div><h3>" + esc(c[0]) + "</h3><p>" + esc(c[1]) + "</p></div>";
+      return '<div class="card pillar reveal" style="--d:' + (i * 90) + 'ms"><div class="pillar-ico"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round">' + pillarIcons[i] + "</svg></div><h3>" + esc(c[0]) + "</h3><p>" + esc(c[1]) + "</p></div>";
     }).join("");
 
     var holdings = stocks.slice(0, 6).map(function (p) {
       var info = state.prices[p.code] || {};
-      return '<div class="card holding"><div class="holding-top"><div><div class="holding-code">' + esc(p.code) + '</div><div class="muted small">' + esc(p.name) + "</div></div>" +
+      return '<div class="card holding reveal"><div class="holding-top"><div><div class="holding-code">' + esc(p.code) + '</div><div class="muted small">' + esc(p.name) + "</div></div>" +
         '<div class="holding-weight">' + fmtPct(p.weight) + '<span class="muted small"> of the fund</span></div></div>' +
         '<div class="holding-meta"><span class="pill">' + esc(info.sector || p.sector || sleeveLabel(p.sleeve)) + '</span><span class="' + signClass(p.gain) + '">' + (p.gain >= 0 ? "+" : "") + fmtPct(p.cost > 0 ? p.gain / p.cost : 0) + " since bought</span></div>" +
         (theses[p.code] ? '<p class="holding-thesis">' + esc(theses[p.code]) + "</p>" : "") + "</div>";
@@ -794,17 +869,17 @@
       '<section class="home-hero">' +
         '<div class="home-hero-text"><div class="eyebrow light">An AFSA initiative · Macquarie University</div>' +
           "<h1>A student-run fund, managed like the real thing.</h1>" +
-          "<p>The Lighthouse Fund is a simulated A$" + Math.round(CFG.STARTING_CAPITAL).toLocaleString("en-AU") + " portfolio of Australian shares, researched and run by Macquarie students under a written charter.</p>" +
+          "<p>The Lighthouse Fund is a simulated A$" + Math.round(CFG.STARTING_CAPITAL).toLocaleString("en-AU") + " portfolio of Australian shares, researched at Macquarie University and run under a written charter.</p>" +
           '<div class="home-cta"><button type="button" class="btn" data-view="portfolio">View the portfolio</button>' +
           (state.user ? "" : '<button type="button" class="btn ghost" data-view="signin">Member sign in</button>') + "</div></div>" +
         '<div class="home-stats">' +
-          '<div class="home-stat main"><div class="eyebrow light">Fund value</div><div class="home-stat-value">' + fmtMoney(pf.total) + '</div><span class="delta ' + dir + '">' + (gain > 0 ? "+" : "") + fmtPct(ret, 2) + " since inception</span></div>" +
+          '<div class="home-stat main"><div class="eyebrow light">Fund value</div><div class="home-stat-value" data-count="' + pf.total + '">' + fmtMoney(pf.total) + '</div><span class="delta ' + dir + '">' + (gain > 0 ? "+" : "") + fmtPct(ret, 2) + " since inception</span></div>" +
           '<div class="home-stat"><div class="eyebrow light">Holdings</div><div class="home-stat-small">' + pf.positions.length + "</div></div>" +
           '<div class="home-stat"><div class="eyebrow light">Invested</div><div class="home-stat-small">' + fmtPct(pf.total > 0 ? pf.holdingsValue / pf.total : 0, 0) + "</div></div>" +
           '<div class="home-stat"><div class="eyebrow light">Benchmark</div><div class="home-stat-small">ASX 300</div></div>' +
         "</div>" +
-      "</section>" +
-      '<section class="home-section"><div class="section-head"><h2>How the fund is run</h2><p class="muted">The same disciplines a professional fund works under, scaled to a student team.</p></div><div class="pillars">' + pillars + "</div></section>" +
+      "</section>" + tickerHtml(pf) +
+      '<section class="home-section"><div class="section-head"><h2>How the fund is run</h2><p class="muted">The same disciplines a professional fund works under.</p></div><div class="pillars">' + pillars + "</div></section>" +
       '<section class="home-section"><div class="section-head"><h2>Performance</h2><p class="muted">' + (perf.sample && perf.points.length ? "Sample history for the demo." : "Tracked every trading day against the same money left in the ASX 300 index ETF.") + "</p></div>" + performanceCardHtml(perf, true) + "</section>" +
       '<section class="home-section"><div class="section-head"><h2>What the fund holds</h2><button type="button" class="link" data-view="portfolio">See the full portfolio</button></div>' +
         (holdings ? '<div class="holdings-grid">' + holdings + "</div>" : '<div class="card home-empty"><strong>The fund is fully in cash.</strong><span class="muted"> Its first positions will appear here as soon as they are bought.</span></div>') + "</section>" +
@@ -945,7 +1020,7 @@
     var info = state.prices[o.code];
     el.className = "card ticket " + o.side;
     if (!info) {
-      el.innerHTML = "<h2>" + (o.side === "sell" ? "Sell order" : "Buy order") + '</h2><p class="muted" style="margin:0">' + (o.side === "sell" ? "Choose one of the fund's holdings to sell." : "Choose a stock from the list to buy.") + "</p>";
+      el.innerHTML = "<h2>" + (o.side === "sell" ? "Sell order" : "Buy order") + '</h2><p class="muted" style="margin:0">' + (o.side === "sell" ? "Choose one of the fund's holdings to sell." : "Choose a stock from the list to buy.") + "</p>" + (o.side === "sell" ? "" : moversHtml());
       return;
     }
     var isEtf = info.code === CFG.ETF_CODE;
@@ -1281,6 +1356,7 @@
 
   function render() {
     renderChrome();
+    setTimeout(playMotion, 0);
     if (state.view === "home") renderHome();
     else if (state.view === "trade") renderTrade();
     else if (state.view === "companies") renderCompanies();
@@ -1295,6 +1371,7 @@
 
   function go(view) {
     state.navigated = true;
+    state.animateNext = true;
     state.view = view;
     if (view === "members" && isAdmin() && !DEMO) {
       store.listMembers().then(function (m) {
