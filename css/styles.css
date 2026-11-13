@@ -443,3 +443,39 @@ body.auth-page main { max-width: none; padding: 0; min-height: 100vh; }
 .chart-empty p { margin: 0; max-width: 460px; }
 .chart-empty strong { color: var(--charcoal); }
 @media (max-width: 640px) { .chart-empty { flex-direction: column; align-items: flex-start; gap: 10px; } .chart-gap { margin-left: 0; width: 100%; } }
+.home-hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 40px; align-items: center; background: linear-gradient(130deg, #16181d 0%, #2b2f36 58%, #5a1a29 100%); color: #fff; border-radius: 20px; padding: 56px 52px; position: relative; overflow: hidden; }
+.home-hero::after { content: ""; position: absolute; right: -140px; bottom: -200px; width: 560px; height: 560px; border-radius: 50%; background: radial-gradient(circle, rgba(158, 27, 50, 0.55), rgba(158, 27, 50, 0) 68%); }
+.home-hero > * { position: relative; z-index: 1; min-width: 0; }
+.home-hero h1 { font-size: 46px; line-height: 1.08; letter-spacing: -0.03em; margin: 14px 0 18px; }
+.home-hero p { font-size: 17px; line-height: 1.55; color: rgba(255, 255, 255, 0.78); max-width: 540px; margin: 0 0 28px; }
+.home-cta { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn.ghost { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.28); color: #fff; }
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.16); }
+.home-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.home-stat { background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; padding: 18px; backdrop-filter: blur(6px); }
+.home-stat.main { grid-column: 1 / -1; padding: 22px; }
+.home-stat-value { font-size: 40px; font-weight: 700; letter-spacing: -0.03em; margin: 6px 0 10px; font-variant-numeric: tabular-nums; }
+.home-stat-small { font-size: 22px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.home-section { margin-top: 44px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.section-head h2 { font-size: 24px; letter-spacing: -0.02em; margin: 0; }
+.section-head p { margin: 0; }
+.pillars { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.pillar-num { font-size: 13px; font-weight: 700; color: var(--crimson); letter-spacing: 0.08em; margin-bottom: 12px; }
+.pillar h3 { font-size: 17px; margin: 0 0 8px; }
+.pillar p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.holdings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.holding-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.holding-code { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.holding-weight { font-size: 18px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.holding-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.holding-thesis { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; line-height: 1.55; }
+.home-empty { font-size: 15px; }
+.people { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.person { display: flex; align-items: center; gap: 14px; }
+.person-name { font-weight: 600; }
+.home-note { margin-top: 44px; padding: 18px 22px; border-radius: 14px; background: #fff; border: 1px solid var(--line); color: var(--muted); font-size: 14px; line-height: 1.55; }
+.home-note strong { color: var(--charcoal); }
+@media (max-width: 1000px) { .pillars, .people { grid-template-columns: repeat(2, minmax(0, 1fr)); } .holdings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-hero { grid-template-columns: minmax(0, 1fr); padding: 36px 28px; } }
+@media (max-width: 600px) { .pillars, .people, .holdings-grid { grid-template-columns: minmax(0, 1fr); } .home-hero h1 { font-size: 34px; } .home-stat-value { font-size: 32px; } .home-hero { padding: 28px 20px; border-radius: 16px; } }
+.avatar.big { width: 48px; height: 48px; font-size: 16px; flex: none; }

@@ -17,7 +17,7 @@
   }
 
   var state = {
-    view: "portfolio",
+    view: "home",
     user: null, // { id, email, name, role }
     trades: [],
     prices: {}, // code -> { code, name, sector, price, change_pct, market_cap, excluded }
@@ -619,7 +619,7 @@
   function renderChrome() {
     document.body.classList.toggle("auth-page", state.view === "signin");
 
-    var tabs = [["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
+    var tabs = [["home", "Home"], ["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
     if (isAdmin() && !DEMO) tabs.push(["members", "Members"]);
     var unseen = isAdmin() && state.view !== "members" ? unseenMembers().length : 0;
     $("#nav").innerHTML = tabs.map(function (t) {
@@ -757,6 +757,62 @@
     drawPerformance(perf);
   }
 
+  // ---------- home page ----------
+  // What a visitor sees first: what the fund is, how it is run and what it holds.
+  function renderHome() {
+    var pf = computePortfolio(state.trades), perf = performancePoints(pf);
+    // If the record could not be loaded, show the starting position, not a fund worth nothing.
+    if (!state.trades.length) pf.total = pf.cash = CFG.STARTING_CAPITAL;
+    var gain = pf.total - CFG.STARTING_CAPITAL, ret = CFG.STARTING_CAPITAL > 0 ? gain / CFG.STARTING_CAPITAL : 0;
+    var dir = Math.abs(gain) < 0.005 ? "flat" : gain > 0 ? "up" : "down";
+    var stocks = pf.positions.filter(function (p) { return p.qty > 0; });
+    var theses = CFG.THESES || {}, team = CFG.TEAM || [];
+
+    var pillars = [
+      ["Australian shares only", "The fund invests in companies in the S&P/ASX 300 and an ASX 300 index ETF. No short selling, borrowing or derivatives."],
+      ["Run by students", "Analysts research companies and make the case for each trade. The Fund Manager signs off every order before it goes through."],
+      ["Limits that hold", "No buy can take a single stock above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + " of the fund, and the site checks every order against the mandate."],
+      ["Everything on the record", "Every trade is kept permanently with who placed it and when. Nothing can be edited or deleted afterwards."]
+    ].map(function (c, i) {
+      return '<div class="card pillar"><div class="pillar-num">' + ("0" + (i + 1)) + "</div><h3>" + esc(c[0]) + "</h3><p>" + esc(c[1]) + "</p></div>";
+    }).join("");
+
+    var holdings = stocks.slice(0, 6).map(function (p) {
+      var info = state.prices[p.code] || {};
+      return '<div class="card holding"><div class="holding-top"><div><div class="holding-code">' + esc(p.code) + '</div><div class="muted small">' + esc(p.name) + "</div></div>" +
+        '<div class="holding-weight">' + fmtPct(p.weight) + '<span class="muted small"> of the fund</span></div></div>' +
+        '<div class="holding-meta"><span class="pill">' + esc(info.sector || p.sector || sleeveLabel(p.sleeve)) + '</span><span class="' + signClass(p.gain) + '">' + (p.gain >= 0 ? "+" : "") + fmtPct(p.cost > 0 ? p.gain / p.cost : 0) + " since bought</span></div>" +
+        (theses[p.code] ? '<p class="holding-thesis">' + esc(theses[p.code]) + "</p>" : "") + "</div>";
+    }).join("");
+
+    var people = team.map(function (m) {
+      var initials = String(m.name || "").split(/\s+/).map(function (w) { return w.charAt(0); }).slice(0, 2).join("").toUpperCase();
+      return '<div class="card person"><span class="avatar big">' + esc(initials) + '</span><div><div class="person-name">' + esc(m.name) + '</div><div class="muted small">' + esc(m.role || "") + "</div></div></div>";
+    }).join("");
+
+    $("#main").innerHTML =
+      '<section class="home-hero">' +
+        '<div class="home-hero-text"><div class="eyebrow light">An AFSA initiative · Macquarie University</div>' +
+          "<h1>A student-run fund, managed like the real thing.</h1>" +
+          "<p>The Lighthouse Fund is a simulated A$" + Math.round(CFG.STARTING_CAPITAL).toLocaleString("en-AU") + " portfolio of Australian shares, researched and run by Macquarie students under a written charter.</p>" +
+          '<div class="home-cta"><button type="button" class="btn" data-view="portfolio">View the portfolio</button>' +
+          (state.user ? "" : '<button type="button" class="btn ghost" data-view="signin">Member sign in</button>') + "</div></div>" +
+        '<div class="home-stats">' +
+          '<div class="home-stat main"><div class="eyebrow light">Fund value</div><div class="home-stat-value">' + fmtMoney(pf.total) + '</div><span class="delta ' + dir + '">' + (gain > 0 ? "+" : "") + fmtPct(ret, 2) + " since inception</span></div>" +
+          '<div class="home-stat"><div class="eyebrow light">Holdings</div><div class="home-stat-small">' + pf.positions.length + "</div></div>" +
+          '<div class="home-stat"><div class="eyebrow light">Invested</div><div class="home-stat-small">' + fmtPct(pf.total > 0 ? pf.holdingsValue / pf.total : 0, 0) + "</div></div>" +
+          '<div class="home-stat"><div class="eyebrow light">Benchmark</div><div class="home-stat-small">ASX 300</div></div>' +
+        "</div>" +
+      "</section>" +
+      '<section class="home-section"><div class="section-head"><h2>How the fund is run</h2><p class="muted">The same disciplines a professional fund works under, scaled to a student team.</p></div><div class="pillars">' + pillars + "</div></section>" +
+      '<section class="home-section"><div class="section-head"><h2>Performance</h2><p class="muted">' + (perf.sample && perf.points.length ? "Sample history for the demo." : "Tracked every trading day against the same money left in the ASX 300 index ETF.") + "</p></div>" + performanceCardHtml(perf, true) + "</section>" +
+      '<section class="home-section"><div class="section-head"><h2>What the fund holds</h2><button type="button" class="link" data-view="portfolio">See the full portfolio</button></div>' +
+        (holdings ? '<div class="holdings-grid">' + holdings + "</div>" : '<div class="card home-empty"><strong>The fund is fully in cash.</strong><span class="muted"> Its first positions will appear here as soon as they are bought.</span></div>') + "</section>" +
+      (people ? '<section class="home-section"><div class="section-head"><h2>The team</h2></div><div class="people">' + people + "</div></section>" : "") +
+      '<section class="home-note"><strong>A simulated fund.</strong> No real money is invested and nothing here is financial advice. The fund exists to give students hands-on experience and to build a track record.</section>';
+    drawPerformance(perf);
+  }
+
   // ---------- performance chart ----------
   // The fund's value each trading day beside the same money left in the index ETF.
   function performancePoints(pf) {
@@ -785,7 +841,7 @@
     var base = rows[0];
     return { points: rows.map(function (r) { return { day: r.day, fund: r.fund, bench: base.fund * r.price / base.price }; }), sample: false };
   }
-  function performanceCardHtml(perf) {
+  function performanceCardHtml(perf, bare) {
     var S = window.LighthouseChart.series, pts = perf.points, body;
     if (pts.length >= 2) {
       var last = pts[pts.length - 1], first = pts[0], diff = (last.fund / first.fund - 1) - (last.bench / first.bench - 1);
@@ -796,8 +852,8 @@
       body = '<div class="chart-empty"><svg viewBox="0 0 240 70" width="240" height="70" aria-hidden="true"><path d="M4 58 C40 50 60 54 92 40 S150 34 178 20 S220 16 236 8" fill="none" stroke="#d5d8de" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round"/></svg>' +
         "<p><strong>The chart starts soon.</strong><br>The fund's value is saved at the end of each trading day. Once there are two days on record, this shows the fund against the ASX 300 index ETF.</p></div>";
     }
-    return '<div class="card"><div class="card-title-row"><h2>Performance</h2><span class="muted small">' +
-      (perf.sample && perf.points.length ? "Sample history for the demo" : "Fund value against the same money left in " + esc(CFG.ETF_CODE)) + "</span></div>" + body + "</div>";
+    return '<div class="card">' + (bare ? "" : '<div class="card-title-row"><h2>Performance</h2><span class="muted small">' +
+      (perf.sample && perf.points.length ? "Sample history for the demo" : "Fund value against the same money left in " + esc(CFG.ETF_CODE)) + "</span></div>") + body + "</div>";
   }
   function drawPerformance(perf) {
     var host = $("#perf-chart");
@@ -1225,7 +1281,8 @@
 
   function render() {
     renderChrome();
-    if (state.view === "trade") renderTrade();
+    if (state.view === "home") renderHome();
+    else if (state.view === "trade") renderTrade();
     else if (state.view === "companies") renderCompanies();
     else if (state.view === "history") renderHistory();
     else if (state.view === "members") renderMembers();
@@ -1237,6 +1294,7 @@
   }
 
   function go(view) {
+    state.navigated = true;
     state.view = view;
     if (view === "members" && isAdmin() && !DEMO) {
       store.listMembers().then(function (m) {
@@ -1266,6 +1324,8 @@
       }).catch(function () { /* shown when the Members page is opened */ }) : null
     ]).then(fillDueOrders).then(function () {
       if (state.view === "signin" && state.user) state.view = "portfolio";
+      // Members land on the portfolio. Visitors land on the home page.
+      if (state.view === "home" && state.user && !state.navigated) state.view = "portfolio";
       // Avoid wiping anything the person is in the middle of typing.
       if (state.view === "trade" && canTrade() && $("#ticket")) {
         renderChrome();

@@ -20,5 +20,12 @@ window.LIGHTHOUSE_CONFIG = {
   MAX_STOCK_WEIGHT: 0.15,
   MIN_ETF_VALUE: 0, // set to 40000 to bring back the index ETF floor
   ACTIVE_SLEEVE_CAP: 30000,
-  PRICE_REFRESH_SECONDS: 120
+  PRICE_REFRESH_SECONDS: 120,
+
+  // Home page. A short thesis for a stock the fund holds, shown on its card, for example
+  // THESES: { JBH: "Market-leading retailer with strong cash generation." }
+  THESES: {},
+  // Home page team section, hidden while this is empty, for example
+  // TEAM: [{ name: "Alex Smith", role: "Fund Manager" }]
+  TEAM: []
 };
