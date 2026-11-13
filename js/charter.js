@@ -34,6 +34,7 @@ window.LIGHTHOUSE_CHARTER_HTML = [
   "<li>Every trade goes through the Fund Manager. An Analyst needs the Fund Manager's current approval code to place an order.</li>",
   "<li>Orders can be placed at the market price or at a limit price. Market orders fill straight away at the delayed price shown. Limit orders wait until the stock trades at the limit price, including at any point during the day, and can be cancelled before then.</li>",
   "<li>There is no brokerage on simulated trades.</li>",
+  "<li>Dividends are recorded by the Fund Manager when they are paid, using the cents per share and the shares the fund holds. Each one is either kept as cash or reinvested in the same stock. Reinvesting counts as a buy, so the single stock limit applies.</li>",
   "<li>Every trade is recorded permanently with the name of the person who placed it and the time. Trades cannot be edited or deleted. A mistake is corrected with a new trade.</li>",
   "</ul>",
 

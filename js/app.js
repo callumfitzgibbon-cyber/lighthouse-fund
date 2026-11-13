@@ -170,6 +170,14 @@
       }
       return Promise.resolve(list);
     },
+    addDividend: function (d) {
+      return demoStore.listTrades().then(function (list) {
+        var row = { id: list.length ? list[list.length - 1].id + 1 : 1, created_at: new Date().toISOString(), type: "dividend", code: d.code, sleeve: null, quantity: null, price: null, brokerage: 0, cash_amount: d.cash_amount, note: d.note, trader_name: state.user.name };
+        list.push(row);
+        try { localStorage.setItem(LS_TRADES, JSON.stringify(list)); } catch (e) { /* storage unavailable */ }
+        return row;
+      });
+    },
     addTrade: function (t) {
       return demoStore.listTrades().then(function (list) {
         var value = t.quantity * t.price;
@@ -272,6 +280,10 @@
           return t;
         });
       });
+    },
+    addDividend: function (d) {
+      return sb.from("trades").insert({ type: "dividend", code: d.code, cash_amount: d.cash_amount, note: d.note, trader_name: state.user.name })
+        .then(function (r) { if (r.error) throw new Error(r.error.message); });
     },
     addTrade: function (t) {
       return sb.from("trades").insert(Object.assign({
@@ -925,6 +937,89 @@
     }).join("") || '<tr><td colspan="6" class="empty">No companies match.</td></tr>';
   }
 
+  // ---------- dividends ----------
+  // The fund manager records a dividend by its cents per share. It is added to the fund as cash.
+  function closeDividend() { var el = $("#dividend-modal"); if (el) el.remove(); }
+  function dividendNumbers() {
+    var sel = $("#div-code"), cents = toNum(($("#div-cents") || {}).value);
+    var pf = computePortfolio(state.trades);
+    var pos = pf.positions.filter(function (p) { return sel && p.code === sel.value; })[0];
+    var qty = pos ? pos.qty : 0;
+    var amount = round2(qty * cents / 100);
+    var info = pos ? state.prices[pos.code] : null;
+    var price = info && info.price > 0 ? info.price : 0;
+    var n = { code: pos ? pos.code : "", sleeve: pos ? pos.sleeve : null, qty: qty, cents: cents, amount: amount, price: price,
+      reinvest: !!($("#div-reinvest") || {}).checked, buyQty: price > 0 ? Math.floor(amount / price) : 0, blocked: "" };
+    // Reinvesting is a buy, so the single stock limit applies to it.
+    if (pos && pos.code !== CFG.ETF_CODE && n.buyQty > 0 && pf.total + amount > 0 &&
+        (pos.value + n.buyQty * price) / (pf.total + amount) > CFG.MAX_STOCK_WEIGHT + 1e-9) {
+      n.blocked = pos.code + " would be above " + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + " of the fund, so this dividend can only be kept as cash.";
+    } else if (amount > 0 && !price) {
+      n.blocked = "There is no price for " + n.code + " right now, so this dividend can only be kept as cash.";
+    } else if (amount > 0 && n.buyQty < 1) {
+      n.blocked = "The dividend is less than the price of one share, so it can only be kept as cash.";
+    }
+    return n;
+  }
+  function renderDividendCalc() {
+    var el = $("#div-calc"), btn = $("[data-action=dividend-save]"), re = $("#div-reinvest");
+    if (!el) return;
+    var n = dividendNumbers();
+    if (re) { re.disabled = !!n.blocked; if (n.blocked && re.checked) { $("#div-cash").checked = true; n.reinvest = false; } }
+    var text = "Enter the dividend in cents per share.";
+    if (n.cents > 0) {
+      text = fmtQty(n.qty) + " shares at " + n.cents + " cents each is a dividend of " + fmtMoney(n.amount) + ". ";
+      if (n.reinvest) text += "It buys " + fmtQty(n.buyQty) + " more " + n.code + " at " + fmtMoney(n.price) + ", and the " + fmtMoney(round2(n.amount - n.buyQty * n.price)) + " left over stays as cash.";
+      else text += "It is added to the fund's cash." + (n.blocked ? " " + n.blocked : "");
+    }
+    el.textContent = text;
+    if (btn) { btn.disabled = !(n.amount > 0); btn.textContent = n.reinvest ? "Record and reinvest" : "Record as cash"; }
+  }
+  function openDividend() {
+    closeDividend();
+    var held = computePortfolio(state.trades).positions.filter(function (p) { return p.qty > 0; });
+    if (!held.length) { toast("The fund holds no shares, so there is no dividend to record."); return; }
+    var el = document.createElement("div");
+    el.className = "modal";
+    el.id = "dividend-modal";
+    el.innerHTML =
+      '<div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="div-title">' +
+        '<h2 id="div-title">Record a dividend</h2>' +
+        '<p class="muted small">Enter it on the day it is paid. It goes on the permanent record.</p>' +
+        '<div class="field"><label for="div-code">Stock</label><select id="div-code">' +
+          held.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.code) + " · " + fmtQty(p.qty) + " shares</option>"; }).join("") + "</select></div>" +
+        '<div class="field"><label for="div-cents">Dividend, in cents per share</label><input id="div-cents" type="number" min="0" step="0.01" inputmode="decimal" placeholder="For example 45"></div>' +
+        '<div class="field"><span class="field-label">What to do with it</span>' +
+          '<label class="choice"><input type="radio" name="div-mode" id="div-cash" checked> Keep it as cash</label>' +
+          '<label class="choice"><input type="radio" name="div-mode" id="div-reinvest"> Reinvest it in the same stock</label></div>' +
+        '<p class="small" id="div-calc"></p>' +
+        '<div class="modal-actions"><button type="button" class="btn secondary" data-action="dividend-cancel">Cancel</button><button type="button" class="btn" data-action="dividend-save" disabled>Record as cash</button></div>' +
+      "</div>";
+    document.body.appendChild(el);
+    renderDividendCalc();
+    $("#div-cents").focus();
+  }
+  function saveDividend() {
+    var n = dividendNumbers();
+    if (!(n.amount > 0)) return;
+    var reinvest = n.reinvest && !n.blocked && n.buyQty > 0;
+    var btn = $("[data-action=dividend-save]");
+    if (btn) btn.disabled = true;
+    var recorded = false;
+    store.addDividend({ code: n.code, cash_amount: n.amount, note: "Dividend of " + n.cents + " cents a share on " + fmtQty(n.qty) + " shares" })
+      .then(function () {
+        recorded = true;
+        if (!reinvest) return null;
+        return store.addTrade({ type: "buy", code: n.code, sleeve: n.sleeve, quantity: n.buyQty, price: n.price, note: "Dividend reinvested" });
+      })
+      .then(function () { closeDividend(); return refreshAll(); })
+      .then(function () { toast("Dividend recorded: " + fmtMoney(n.amount) + " from " + n.code + (reinvest ? ", reinvested in " + fmtQty(n.buyQty) + " shares" : "")); })
+      .catch(function (e) {
+        if (recorded) { closeDividend(); refreshAll(); toast("The dividend was recorded as cash, but the reinvestment did not go through: " + e.message); }
+        else { if (btn) btn.disabled = false; toast("Dividend not recorded: " + e.message); }
+      });
+  }
+
   function renderHistory() {
     var showBrokerage = state.trades.some(function (t) { return t.brokerage > 0; });
     var showNote = state.trades.some(function (t) { return t.note && t.type !== "deposit"; });
@@ -947,7 +1042,8 @@
     }).join("");
     $("#main").innerHTML =
       '<div class="page-head"><div><h1>History</h1><div class="muted small">Every trade the fund has made, newest first, with who placed it and when (Sydney time). Entries cannot be edited or deleted.</div></div>' +
-      '<button type="button" class="btn" data-action="export">' + ICON.down + "Download Excel</button></div>" +
+      '<div class="head-actions">' + (isAdmin() ? '<button type="button" class="btn secondary" data-action="dividend-open">Record dividend</button>' : "") +
+      '<button type="button" class="btn" data-action="export">' + ICON.down + "Download Excel</button></div></div>" +
       '<div class="card flush"><div class="table-scroll"><table><thead><tr><th class="num">No.</th><th>When</th><th>Type</th><th>Stock</th><th>Sleeve</th><th class="num">Quantity</th><th class="num">Price</th>' + (showBrokerage ? '<th class="num">Brokerage</th>' : "") + '<th class="num">Cash effect</th><th>By</th>' + (showNote ? "<th>Note</th>" : "") + '</tr></thead><tbody>' +
       (rows || '<tr><td colspan="11" class="empty">No trades yet.</td></tr>') + "</tbody></table></div></div>" +
       "";
@@ -1501,6 +1597,9 @@
     var a = t.dataset.action;
     if (a === "submit-order") submitOrder();
     else if (a === "export") exportExcel();
+    else if (a === "dividend-open") openDividend();
+    else if (a === "dividend-cancel") closeDividend();
+    else if (a === "dividend-save") saveDividend();
     else if (a === "signout") store.signOut().then(function () { state.user = null; state.view = "portfolio"; render(); });
     else if (a === "pick-avatar") $("#avatar-file").click();
     else if (a === "remove-avatar") saveAvatar(null);
@@ -1548,6 +1647,7 @@
     if (id === "crop-zoom") { crop.zoom = Number(e.target.value); drawCrop(); }
     else if (id === "search") { state.search = e.target.value; $("#universe").innerHTML = universeRows(); }
     else if (id === "co-search") { state.coSearch = e.target.value; renderCompanyRows(); }
+    else if (id === "div-cents" || id === "div-code" || id === "div-cash" || id === "div-reinvest") renderDividendCalc();
     else if (id === "qty") { state.order.qty = e.target.value; renderCalc(); }
     else if (id === "amount") { state.order.amount = e.target.value; renderCalc(); }
     else if (id === "limit") { state.order.limit = e.target.value; renderCalc(); }

@@ -398,3 +398,10 @@ body.auth-page main { max-width: none; padding: 0; min-height: 100vh; }
   th:last-child, td:last-child { padding-right: 16px; }
   .brand-sub { display: none; }
 }
+
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#dividend-modal .field { margin-top: 14px; }
+#dividend-modal #div-calc { margin: 14px 0 18px; }
+.field-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.choice { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; padding: 5px 0; cursor: pointer; }
+.choice input { width: auto; margin: 0; accent-color: var(--crimson); }
