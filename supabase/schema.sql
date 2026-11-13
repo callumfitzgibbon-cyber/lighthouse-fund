@@ -144,11 +144,11 @@ create trigger check_trade
 alter table public.profiles enable row level security;
 alter table public.trades enable row level security;
 
--- Anyone can read the trade record. Only traders and admins can add to it.
+-- Signed-in members can read the trade record. Only traders and admins can add to it.
 -- There are no update or delete rules, so nobody can change or remove a trade.
 drop policy if exists "trades are public" on public.trades;
 create policy "trades are public" on public.trades
-  for select to anon, authenticated using (true);
+  for select to authenticated using (true);
 
 drop policy if exists "traders add trades" on public.trades;
 create policy "traders add trades" on public.trades
@@ -167,7 +167,7 @@ create policy "admin updates profiles" on public.profiles
   with check (public.current_role_name() = 'admin');
 
 revoke all on public.trades from anon, authenticated;
-grant select on public.trades to anon, authenticated;
+grant select on public.trades to authenticated;
 grant insert on public.trades to authenticated;
 grant select, update on public.profiles to authenticated;
 

@@ -15,9 +15,9 @@ create table if not exists public.fund_snapshots (
 alter table public.fund_snapshots enable row level security;
 drop policy if exists "snapshots are public" on public.fund_snapshots;
 create policy "snapshots are public" on public.fund_snapshots
-  for select to anon, authenticated using (true);
+  for select to authenticated using (true);
 revoke all on public.fund_snapshots from anon, authenticated;
-grant select on public.fund_snapshots to anon, authenticated;
+grant select on public.fund_snapshots to authenticated;
 
 -- ---------- 2. working out the fund's value from the price feed ----------
 -- Saves (or updates) today's row. Does nothing on a day the market has not traded,

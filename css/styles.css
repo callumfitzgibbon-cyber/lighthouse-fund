@@ -632,3 +632,6 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(1); }
 .sector-bar .breadth-down { flex: 1; }
 @media (max-width: 560px) { .sector-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sector-top { flex-direction: column; gap: 6px; } }
 @media (prefers-reduced-motion: reduce) { .sector-tile, .card { transition: none; } }
+.members-only { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding: 26px 28px; border-left: 3px solid var(--crimson); }
+.members-only h2 { font-size: 19px; margin-bottom: 6px; }
+.members-only p { margin: 0; max-width: 620px; font-size: 14.5px; line-height: 1.55; }

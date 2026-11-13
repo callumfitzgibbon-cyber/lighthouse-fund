@@ -19,9 +19,9 @@ create table if not exists public.order_checks (
 alter table public.order_checks enable row level security;
 drop policy if exists "order checks are public" on public.order_checks;
 create policy "order checks are public" on public.order_checks
-  for select to anon, authenticated using (true);
+  for select to authenticated using (true);
 revoke all on public.order_checks from anon, authenticated;
-grant select on public.order_checks to anon, authenticated;
+grant select on public.order_checks to authenticated;
 insert into public.order_checks (id) values (1) on conflict (id) do nothing;
 
 -- ---------- 3. filling orders from the price feed ----------

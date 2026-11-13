@@ -55,6 +55,8 @@
   function $(sel) { return document.querySelector(sel); }
   function signClass(n) { return n > 0 ? "up" : n < 0 ? "down" : ""; }
   function canTrade() { return !!state.user && (state.user.role === "trader" || state.user.role === "admin"); }
+  // Visitors without an account see nothing of the real fund. Demo mode stays open to everyone.
+  function locked() { return !DEMO && !state.user; }
   function isAdmin() { return !!state.user && state.user.role === "admin"; }
   function brokerageFor(value) { return Math.max(CFG.BROKERAGE_FLAT, value * CFG.BROKERAGE_RATE); }
   function round2(n) { return Math.round(n * 100) / 100; }
@@ -620,7 +622,7 @@
   function renderChrome() {
     document.body.classList.toggle("auth-page", state.view === "signin");
 
-    var tabs = [["home", "Home"], ["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
+    var tabs = locked() ? [["home", "Home"], ["companies", "Companies"]] : [["home", "Home"], ["portfolio", "Portfolio"], ["trade", "Trade"], ["companies", "Companies"], ["history", "History"]];
     if (isAdmin() && !DEMO) tabs.push(["members", "Members"]);
     var unseen = isAdmin() && state.view !== "members" ? unseenMembers().length : 0;
     $("#nav").innerHTML = tabs.map(function (t) {
@@ -643,10 +645,10 @@
     $("#strip").innerHTML =
       '<span class="strip-item"><i class="dot ' + (open ? "on" : "") + '"></i>ASX ' + (open ? "open" : "closed") + "</span>" +
       '<span class="strip-item hide-sm">' + pricesStamp() + "</span>" +
-      '<span class="strip-gap"></span>' +
+      '<span class="strip-gap"></span>' + (locked() ? '<span class="strip-item">Sign in to see the fund</span>' :
       '<span class="strip-item"><b>Fund</b> ' + fmtMoney(pf.total) + "</span>" +
       '<span class="strip-item"><b>Return</b> <span class="' + signClass(pf.ret) + '">' + (pf.ret > 0 ? "+" : "") + fmtPct(pf.ret, 2) + "</span></span>" +
-      '<span class="strip-item hide-sm"><b>Cash</b> ' + fmtMoney(pf.cash) + "</span>";
+      '<span class="strip-item hide-sm"><b>Cash</b> ' + fmtMoney(pf.cash) + "</span>");
 
     var notes = [];
     var demoNote = DEMO ? '<div class="banner demo"><div class="wrap"><span><b>Demo mode.</b> Trade as much as you like. Everything here stays in this browser and the real fund is not touched.</span>' +
@@ -881,6 +883,28 @@
       return '<div class="card person"><span class="avatar big">' + esc(initials) + '</span><div><div class="person-name">' + esc(m.name) + '</div><div class="muted small">' + esc(m.role || "") + "</div></div></div>";
     }).join("");
 
+    if (locked()) {
+      $("#main").innerHTML =
+        '<section class="home-hero">' +
+          '<div class="home-hero-text"><div class="eyebrow light">An AFSA initiative · Macquarie University</div>' +
+            "<h1>A student-run fund, managed like the real thing.</h1>" +
+            "<p>The Lighthouse Fund is a simulated A$" + Math.round(CFG.STARTING_CAPITAL).toLocaleString("en-AU") + " portfolio of Australian shares, researched at Macquarie University and run under a written charter.</p>" +
+            '<div class="home-cta"><button type="button" class="btn" data-view="signin">Member sign in</button>' +
+            '<button type="button" class="btn ghost" data-action="enter-demo">Try demo mode</button></div></div>' +
+          '<div class="home-stats">' +
+            '<div class="home-stat main"><div class="eyebrow light">Simulated portfolio</div><div class="home-stat-value">A$' + Math.round(CFG.STARTING_CAPITAL).toLocaleString("en-AU") + '</div><span class="delta flat">No real money is invested</span></div>' +
+            '<div class="home-stat"><div class="eyebrow light">Universe</div><div class="home-stat-small">ASX 300</div></div>' +
+            '<div class="home-stat"><div class="eyebrow light">Buy limit</div><div class="home-stat-small">' + fmtPct(CFG.MAX_STOCK_WEIGHT, 0) + "</div></div>" +
+            '<div class="home-stat"><div class="eyebrow light">Benchmark</div><div class="home-stat-small">ASX 300</div></div>' +
+          "</div>" +
+        "</section>" + tickerHtml(pf) +
+        '<section class="home-section"><div class="section-head"><h2>How the fund is run</h2><p class="muted">The same disciplines a professional fund works under.</p></div><div class="pillars">' + pillars + "</div></section>" +
+        '<section class="home-section"><div class="card members-only"><div><h2>The portfolio is for members</h2><p class="muted">The fund\'s holdings, trades and performance are only shown to people with an account. Demo mode lets anyone try the trading desk with a sample portfolio.</p></div>' +
+          '<div class="home-cta"><button type="button" class="btn" data-view="signin">Member sign in</button><button type="button" class="btn secondary" data-action="enter-demo">Try demo mode</button></div></div></section>' +
+        (people ? '<section class="home-section"><div class="section-head"><h2>The team</h2></div><div class="people">' + people + "</div></section>" : "") +
+        '<section class="home-note"><strong>A simulated fund.</strong> No real money is invested and nothing here is financial advice. The fund exists to give students hands-on experience and to build a track record.</section>';
+      return;
+    }
     $("#main").innerHTML =
       '<section class="home-hero">' +
         '<div class="home-hero-text"><div class="eyebrow light">An AFSA initiative · Macquarie University</div>' +
@@ -1419,13 +1443,14 @@
           "<h2>" + (signupMode ? "Create your account" : "Sign in") + "</h2>" +
           '<p class="muted small">' + (signupMode ? "New accounts can view the fund. The fund manager can then make you an analyst." : "Welcome back. Sign in to manage the fund.") + "</p>" +
           form +
-          '<p class="auth-back"><button type="button" class="link" data-view="portfolio">View the fund without signing in</button>' +
+          '<p class="auth-back"><button type="button" class="link" data-view="home">Back to the home page</button>' +
             (DEMO ? "" : ' <span aria-hidden="true">·</span> <button type="button" class="link" data-action="enter-demo">Try demo mode</button>') + "</p>" +
         "</div></div>" +
       "</div>";
   }
 
   function render() {
+    if (locked() && state.view !== "home" && state.view !== "companies" && state.view !== "signin") state.view = "signin";
     renderChrome();
     setTimeout(playMotion, 0);
     if (state.view === "home") renderHome();
@@ -1462,9 +1487,10 @@
   function refreshAll() {
     return Promise.all([
       loadPrices(),
-      store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); }),
-      store.listOrders().then(function (o) { state.orders = o; }).catch(function () { state.orders = []; }),
-      store.listSnapshots().then(function (h) { state.snapshots = h; }).catch(function () { state.snapshots = []; }),
+      // The fund's record is only fetched for people who are signed in.
+      locked() ? (state.trades = [], state.orders = [], state.snapshots = [], null) : store.listTrades().then(function (t) { state.trades = t; }).catch(function (e) { toast("Could not load trades: " + e.message); }),
+      locked() ? null : store.listOrders().then(function (o) { state.orders = o; }).catch(function () { state.orders = []; }),
+      locked() ? null : store.listSnapshots().then(function (h) { state.snapshots = h; }).catch(function () { state.snapshots = []; }),
       // The fund manager's member list, so the Members tab can flag new sign-ups.
       isAdmin() && !DEMO ? store.listMembers().then(function (m) {
         state.members = m;
@@ -1905,7 +1931,7 @@
     else if (a === "dividend-open") openDividend();
     else if (a === "dividend-cancel") closeDividend();
     else if (a === "dividend-save") saveDividend();
-    else if (a === "signout") store.signOut().then(function () { state.user = null; state.view = "portfolio"; render(); });
+    else if (a === "signout") store.signOut().then(function () { state.user = null; state.trades = []; state.orders = []; state.snapshots = []; state.orderCheck = null; state.view = "home"; render(); });
     else if (a === "pick-avatar") $("#avatar-file").click();
     else if (a === "remove-avatar") saveAvatar(null);
     else if (a === "crop-cancel") closeCropper();

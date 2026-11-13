@@ -241,13 +241,13 @@ create trigger check_order
 alter table public.orders enable row level security;
 drop policy if exists "orders are public" on public.orders;
 create policy "orders are public" on public.orders
-  for select to anon, authenticated using (true);
+  for select to authenticated using (true);
 drop policy if exists "traders place orders" on public.orders;
 create policy "traders place orders" on public.orders
   for insert to authenticated
   with check (public.current_role_name() in ('trader', 'admin'));
 revoke all on public.orders from anon, authenticated;
-grant select on public.orders to anon, authenticated;
+grant select on public.orders to authenticated;
 grant insert on public.orders to authenticated;
 
 -- Fills an open order once the market price has reached its limit.
