@@ -760,3 +760,26 @@ td.lvl .link.small { font-size: 12.5px; font-weight: 600; }
 .attr-bar.pre { transform: scaleX(0); }
 .attr-bar.pre.in { transform: none; animation: grow 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; animation-delay: var(--d, 0ms); }
 .pill.sleeve { font-size: 10.5px; padding: 1px 7px; margin-left: 4px; vertical-align: 1px; font-weight: 600; }
+
+/* Tab bar: capsule with icons and a sliding highlight */
+.nav { position: relative; align-self: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(15, 18, 23, 0.75); border: 1px solid var(--line); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+.nav button { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; color: #c0c7d2; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; transition: color 0.2s, background 0.2s; }
+.nav button:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+.nav button[aria-current="page"] { color: #fff; border: 0; background: transparent; }
+.nav button:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.nav-ico { flex: none; opacity: 0.7; transition: opacity 0.2s, transform 0.25s; }
+.nav button:hover .nav-ico { opacity: 1; transform: translateY(-1px); }
+.nav button[aria-current="page"] .nav-ico { opacity: 1; }
+.nav-ind { position: absolute; z-index: 0; top: 4px; left: 0; height: 36px; width: 0; opacity: 0; border-radius: 999px; pointer-events: none;
+  background: linear-gradient(135deg, #c2233f 0%, #9e1b32 55%, #7a1426 100%);
+  box-shadow: 0 6px 18px -4px rgba(240, 82, 107, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 0.38s cubic-bezier(0.3, 1.25, 0.4, 1), width 0.38s cubic-bezier(0.3, 1.25, 0.4, 1), opacity 0.2s; }
+.nav .count { background: #fff; color: var(--crimson); }
+@media (max-width: 980px) {
+  .nav { align-self: auto; width: 100%; margin: 0 0 10px; padding: 4px; overflow-x: auto; scrollbar-width: none; border-top: 1px solid var(--line); }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav button { padding: 0 13px; }
+}
+@media (max-width: 560px) { .nav { width: 100%; margin: 0 0 10px; padding: 4px; } }
+@media (prefers-reduced-motion: reduce) { .nav-ind, .nav-ico { transition: none; } }
+@media print { .nav { display: none; } }

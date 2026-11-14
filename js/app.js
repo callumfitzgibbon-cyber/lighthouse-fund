@@ -731,6 +731,32 @@
   }
   setInterval(tickCode, 1000);
 
+  var NAV_ICONS = {
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+    portfolio: '<path d="M21 12a9 9 0 1 1-9-9"/><path d="M12 3v9h9a9 9 0 0 0-9-9z"/>',
+    trade: '<path d="M4 8h14"/><path d="M14 4l4 4-4 4"/><path d="M20 16H6"/><path d="M10 12l-4 4 4 4"/>',
+    companies: '<rect x="4" y="3" width="10" height="18" rx="1"/><path d="M14 9h6v12h-6"/><path d="M8 7h2M8 11h2M8 15h2"/>',
+    history: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    report: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+    members: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5a6 6 0 0 1 3.5 5.5"/>'
+  };
+  // Slides the highlight from the tab you were on to the one you picked.
+  function placeNavInd(from) {
+    var nav = $("#nav"), ind = nav.querySelector(".nav-ind"), cur = nav.querySelector('[aria-current="page"]');
+    if (!ind) return;
+    if (!cur || !cur.offsetWidth) { ind.style.opacity = "0"; ind.style.width = ""; return; }
+    var to = { x: "translateX(" + cur.offsetLeft + "px)", w: cur.offsetWidth + "px" };
+    if (from && (from.x !== to.x || from.w !== to.w)) {
+      ind.style.transition = "none"; ind.style.transform = from.x; ind.style.width = from.w;
+      void ind.offsetWidth;
+      ind.style.transition = "";
+    }
+    ind.style.opacity = "1"; ind.style.transform = to.x; ind.style.width = to.w;
+    if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2);
+  }
+  window.addEventListener("resize", function () { placeNavInd(null); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { placeNavInd(null); });
+
   function renderChrome() {
     document.body.classList.toggle("auth-page", state.view === "signin");
 
@@ -738,11 +764,16 @@
     if (isAdmin() && !DEMO) tabs.push(["members", "Members"]);
     var waiting = isAdmin() && state.proposalsOn && state.view !== "trade" ? pendingProposals().length : 0;
     var unseen = isAdmin() && state.view !== "members" ? unseenMembers().length : 0;
-    $("#nav").innerHTML = tabs.map(function (t) {
-      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" + t[1] +
+    var navEl = $("#nav");
+    var oldInd = navEl.querySelector(".nav-ind");
+    var from = oldInd && oldInd.style.width ? { x: oldInd.style.transform, w: oldInd.style.width } : null;
+    navEl.innerHTML = '<span class="nav-ind" aria-hidden="true"></span>' + tabs.map(function (t) {
+      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" +
+        '<svg class="nav-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NAV_ICONS[t[0]] || "") + "</svg><span>" + t[1] + "</span>" +
         (t[0] === "members" && unseen ? '<span class="count" title="New members">' + unseen + "</span>" : "") +
         (t[0] === "trade" && waiting ? '<span class="count" title="Proposals waiting for you">' + waiting + "</span>" : "") + "</button>";
     }).join("");
+    placeNavInd(from);
 
     var acc;
     if (state.user) {
