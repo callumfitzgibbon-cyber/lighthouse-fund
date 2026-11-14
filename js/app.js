@@ -2476,7 +2476,10 @@
   }
   function announcementsCardHtml(code) {
     if (locked()) return "";
-    var list = state.ann.filter(function (a) { return code ? a.code === code : a.code !== CFG.ETF_CODE; }).slice(0, code ? 6 : 7);
+    var want = {};
+    annCodes().forEach(function (c) { want[c] = true; });
+    // The main card only shows stocks the fund holds or watches right now.
+    var list = state.ann.filter(function (a) { return code ? a.code === code : !!want[a.code]; }).slice(0, code ? 6 : 7);
     var rows = list.map(function (a) {
       return '<li><a class="ann" href="' + annUrl(a.code) + '" target="_blank" rel="noopener noreferrer">' + (code ? "" : '<span class="ann-code">' + esc(a.code) + "</span>") +
         '<span class="ann-main"><span class="ann-head">' + esc(a.headline) + "</span>" + '<span class="muted small">' + esc(ago(a.announced_at)) + (a.kind ? " · " + esc(String(a.kind).toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); })) : "") + "</span></span>" +
