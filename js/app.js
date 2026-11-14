@@ -2402,20 +2402,36 @@
   // ---------- scoreboard ----------
   function scoreboardHtml() {
     var by = {}, get = function (name) { return by[name] || (by[name] = { name: name, buys: 0, wins: 0, moveSum: 0, gain: 0, sent: 0, approved: 0 }); };
+    // Each buy is a lot credited to whoever placed it. Sells use up the oldest lots first,
+    // so a profit that was taken counts for the person who picked the stock.
+    var lots = {};
     state.trades.forEach(function (t) {
-      if (t.type !== "buy" || !t.trader_name || t.trader_name === "System" || t.code === CFG.ETF_CODE) return;
-      var info = state.prices[t.code];
-      if (!info || !(info.price > 0) || !(t.price > 0)) return;
-      var s = get(t.trader_name), move = info.price / t.price - 1;
-      s.buys++; s.moveSum += move; s.gain += (info.price - t.price) * t.quantity; if (move > 0) s.wins++;
+      if (!t.code || t.code === CFG.ETF_CODE || !(t.quantity > 0) || !(t.price > 0)) return;
+      if (t.type === "buy") (lots[t.code] || (lots[t.code] = [])).push({ who: t.trader_name, price: t.price, qty: t.quantity, left: t.quantity, realised: 0 });
+      else if (t.type === "sell") {
+        var need = t.quantity, q = lots[t.code] || [];
+        for (var k = 0; k < q.length && need > 1e-9; k++) {
+          var take = Math.min(q[k].left, need);
+          q[k].left -= take; q[k].realised += (t.price - q[k].price) * take; need -= take;
+        }
+      }
+    });
+    Object.keys(lots).forEach(function (code) {
+      var info = state.prices[code], cur = info && info.price > 0 ? info.price : 0;
+      lots[code].forEach(function (l) {
+        if (!l.who || l.who === "System") return;
+        if (l.left > 1e-9 && !cur) return; // still held but no price: left out
+        var gain = l.realised + (cur - l.price) * l.left, move = gain / (l.price * l.qty), s = get(l.who);
+        s.buys++; s.moveSum += move; s.gain += gain; if (gain > 0) s.wins++;
+      });
     });
     state.proposals.forEach(function (x) { if (!x.trader_name) return; var s = get(x.trader_name); s.sent++; if (x.status === "approved") s.approved++; });
     var list = Object.keys(by).map(function (k) { return by[k]; }).filter(function (s) { return s.buys > 0 || s.sent > 0; })
       .sort(function (a, b) { return (b.buys > 0) - (a.buys > 0) || b.gain - a.gain || b.approved - a.approved; });
     if (!list.some(function (s) { return s.buys > 0; })) return "";
     var showIdeas = list.some(function (s) { return s.sent > 0; }), medal = ["gold", "silver", "bronze"];
-    return '<div class="card flush"><div class="card-head"><h2>Scoreboard</h2><span class="muted small">How each person\'s stock picks have moved since they were bought</span></div>' +
-      '<div class="table-scroll"><table class="score"><thead><tr><th>Rank</th><th>Person</th>' + (showIdeas ? '<th class="num">Proposals</th>' : "") + '<th class="num">Buys</th><th class="num">In profit</th><th class="num">Average move</th><th class="num">Gain since buying</th></tr></thead><tbody>' +
+    return '<div class="card flush"><div class="card-head"><h2>Scoreboard</h2><span class="muted small">How each person\'s stock picks have done since they were bought, including profits taken on sales</span></div>' +
+      '<div class="table-scroll"><table class="score"><thead><tr><th>Rank</th><th>Person</th>' + (showIdeas ? '<th class="num">Proposals</th>' : "") + '<th class="num">Buys</th><th class="num">In profit</th><th class="num">Average move</th><th class="num">Gain or loss</th></tr></thead><tbody>' +
       list.map(function (s, i) {
         var avg = s.buys ? s.moveSum / s.buys : 0;
         return '<tr><td><span class="rank ' + (s.buys && medal[i] ? medal[i] : "") + '">' + (i + 1) + '</span></td><td><span class="co"><span class="avatar sm" aria-hidden="true">' + esc(initials(s.name)) + "</span><b>" + esc(s.name) + "</b></span></td>" +
@@ -3139,5 +3155,5 @@
     });
 
   // Exposed for automated tests.
-  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor, phraseFor: phraseFor, codeFromPhrase: codeFromPhrase, attribution: attribution, riskStats: riskStats, orderNumbers: orderNumbers, quote: quote };
+  window.__lighthouse = { state: state, computePortfolio: computePortfolio, validateOrder: validateOrder, parseCsv: parseCsv, go: go, render: render, refreshAll: refreshAll, fillPriceFor: fillPriceFor, phraseFor: phraseFor, codeFromPhrase: codeFromPhrase, scoreboardHtml: scoreboardHtml, attribution: attribution, riskStats: riskStats, orderNumbers: orderNumbers, quote: quote };
 })();
