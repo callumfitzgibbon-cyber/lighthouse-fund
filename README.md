@@ -89,3 +89,6 @@ The AFSA Lighthouse Fund is a simulated student portfolio run for educational pu
 - **Recent activity** on the Portfolio page, and a loading shimmer while the site starts.
 - **Watchlist**, **ASX announcements** and **order expiry** need `supabase/update-2026-11-14.sql`. Without it the watchlist is kept in each browser, announcements are fetched straight from the ASX feed when the browser is allowed to, and limit orders never expire.
 - Announcements come from the public feed behind the ASX website. It is not an official data product and may change or stop without notice.
+- **Price charts** on stock pages need `supabase/update-2026-11-14b.sql`, which saves every company's closing price each trading day (`price_history`). The history starts on the day it is run.
+- **Scoreboard** on the Portfolio page ranks people by how their stock picks have moved since they were bought.
+- **Notification bell** in the header and a **first-visit tour** (replay it from the Profile page). Both remember what you have seen in the browser.

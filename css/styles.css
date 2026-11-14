@@ -971,3 +971,55 @@ button.co-link { background: transparent; border: 0; padding: 0; font: inherit; 
 .ann-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ann-head { font-weight: 600; font-size: 14px; }
 .pill.sens { background: rgba(255, 209, 102, 0.16); color: #ffd166; }
+
+/* Price history on stock pages */
+.px-svg { display: block; width: 100%; height: auto; }
+.px-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: px-draw 1.4s 0.1s cubic-bezier(0.3, 0.7, 0.2, 1) forwards; }
+.px-area { opacity: 0; animation: px-fade 0.8s 0.9s forwards; }
+.px-stats { display: flex; gap: 22px; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+.px-stats b { color: var(--ink); font-variant-numeric: tabular-nums; } .px-stats b.up { color: var(--good); } .px-stats b.down { color: var(--bad); }
+.px-wait { height: 200px; border-radius: 10px; }
+@keyframes px-draw { to { stroke-dashoffset: 0; } }
+@keyframes px-fade { to { opacity: 1; } }
+/* Scoreboard */
+.rank { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; font-weight: 700; font-size: 13px; background: var(--raise-2); color: var(--charcoal); }
+.rank.gold { background: linear-gradient(135deg, #ffe08a, #d4a017); color: #3b2a00; box-shadow: 0 0 14px -2px rgba(255, 209, 102, 0.7); }
+.rank.silver { background: linear-gradient(135deg, #eef1f5, #9aa3b0); color: #22262d; }
+.rank.bronze { background: linear-gradient(135deg, #f0b98a, #a8642e); color: #331a05; }
+.avatar.sm { width: 30px; height: 30px; font-size: 11.5px; flex: none; }
+.score .co { gap: 10px; }
+/* Notification bell */
+.bell { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: transparent; border: 1px solid transparent; color: #c0c7d2; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.bell:hover, .bell[aria-expanded="true"] { background: var(--raise); color: #fff; border-color: var(--line); }
+.bell.has { color: #fff; }
+.bell.has svg { animation: bell-ring 2.6s ease-in-out 1s 2; transform-origin: 50% 10%; }
+.bell-count { position: absolute; top: 3px; right: 2px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: var(--crimson); color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px #13161c, 0 0 10px rgba(240, 82, 107, 0.8); }
+@keyframes bell-ring { 0%, 100% { transform: rotate(0); } 6% { transform: rotate(14deg); } 12% { transform: rotate(-12deg); } 18% { transform: rotate(8deg); } 24% { transform: rotate(-5deg); } 30% { transform: rotate(0); } }
+.bell-panel { position: fixed; z-index: 45; width: 380px; max-width: calc(100vw - 16px); max-height: min(70vh, 560px); overflow-y: auto; border-radius: 16px; background: rgba(28, 32, 41, 0.98); border: 1px solid var(--line-strong); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7); animation: bell-in 0.22s cubic-bezier(0.2, 1.1, 0.3, 1) both; transform-origin: top right; }
+@keyframes bell-in { from { opacity: 0; transform: translateY(-8px) scale(0.96); } to { opacity: 1; transform: none; } }
+.bell-head { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 16px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: rgba(28, 32, 41, 0.98); z-index: 2; }
+.bell-list { list-style: none; margin: 0; padding: 6px; }
+.bell-item { display: flex; width: 100%; gap: 11px; align-items: flex-start; padding: 10px; border-radius: 10px; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.bell-item:hover { background: var(--raise-2); }
+.bell-item.fresh { background: rgba(158, 27, 50, 0.16); }
+.bell-item.fresh .bell-title::after { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rose); margin-left: 7px; vertical-align: middle; }
+.bell-item .act-dot { box-shadow: none; }
+.bell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bell-title { font-weight: 600; font-size: 13.5px; }
+.bell-when { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.bell-empty { padding: 18px 16px; margin: 0; }
+.k-buy, .k-ok { background: var(--good-solid) !important; } .k-sell, .k-no { background: var(--bad-solid) !important; } .k-div { background: #b7791f !important; } .k-prop, .k-wait { background: #2f5f9e !important; } .k-ann { background: #8a6d1a !important; }
+@media (max-width: 700px) { .bell-panel { left: 8px; right: 8px !important; width: auto; } }
+/* First-visit tour */
+.tour { position: fixed; inset: 0; z-index: 70; }
+.tour-ring { position: fixed; pointer-events: none; box-shadow: 0 0 0 9999px rgba(8, 10, 14, 0.78), 0 0 0 2px #ff6f86, 0 0 28px 4px rgba(240, 82, 107, 0.65); transition: left 0.4s cubic-bezier(0.3, 1, 0.3, 1), top 0.4s cubic-bezier(0.3, 1, 0.3, 1), width 0.4s cubic-bezier(0.3, 1, 0.3, 1), height 0.4s cubic-bezier(0.3, 1, 0.3, 1); }
+.tour-tip { position: fixed; width: 340px; max-width: calc(100vw - 24px); padding: 18px 20px 14px; border-radius: 16px; background: linear-gradient(150deg, #262b36, #1c2029 60%, #3a1622); border: 1px solid var(--line-strong); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7); color: #fff; transition: left 0.4s cubic-bezier(0.3, 1, 0.3, 1), top 0.4s cubic-bezier(0.3, 1, 0.3, 1); }
+.tour-step { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--rose); }
+.tour-tip h3 { font-family: Montserrat, Inter, sans-serif; font-size: 19px; margin: 4px 0 6px; }
+.tour-tip p { margin: 0 0 14px; font-size: 14px; line-height: 1.55; color: #e1e5eb; }
+.tour-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.tour-dots { display: flex; gap: 5px; justify-content: center; margin-top: 12px; }
+.tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); transition: background 0.2s, width 0.2s; }
+.tour-dots i.on { width: 18px; border-radius: 3px; background: var(--rose); }
+@media (prefers-reduced-motion: reduce) { .tour-ring, .tour-tip, .px-line, .px-area, .bell.has svg, .bell-panel { transition: none; animation: none; } .px-line { stroke-dashoffset: 0; } .px-area { opacity: 1; } }
+@media print { .tour, .bell, .bell-panel { display: none !important; } }

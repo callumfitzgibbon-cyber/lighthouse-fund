@@ -795,7 +795,7 @@
 
     var acc;
     if (state.user) {
-      acc = '<button type="button" class="me" data-view="profile" title="Your profile">' + avatarHtml(state.user) +
+      acc = bellHtml() + '<button type="button" class="me" data-view="profile" title="Your profile">' + avatarHtml(state.user) +
         '<span class="me-text"><span class="me-name">' + esc(state.user.name) + '</span><span class="me-role">' + esc(roleLabel(state.user.role)) + "</span></span></button>";
       if (!DEMO) acc += '<button type="button" class="btn quiet" data-action="signout">Sign out</button>';
     } else {
@@ -916,7 +916,7 @@
         '<div class="stack"><div class="card flush"><div class="card-head"><h2>Holdings</h2>' + (canTrade() ? '<button type="button" class="btn small-btn" data-view="trade">New trade</button>' : "") + "</div>" +
           '<div class="table-scroll"><table><thead><tr><th>Stock</th>' + (state.levelsOn ? '<th class="num">Target / review</th>' : "") + '<th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th class="num">Gain or loss</th><th class="num">Weight</th></tr></thead><tbody>' +
           (rows || '<tr><td colspan="8" class="empty">The fund holds no shares yet. It is all in cash.</td></tr>') +
-        "</tbody></table></div></div>" + performanceCardHtml(perf) + attributionCardHtml() + sectorCardHtml(pf) + "</div>" +
+        "</tbody></table></div></div>" + performanceCardHtml(perf) + attributionCardHtml() + scoreboardHtml() + sectorCardHtml(pf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" + riskCardHtml(perf) +
           watchCardHtml() + announcementsCardHtml("") + activityCardHtml() +
@@ -1772,7 +1772,7 @@
     }).join("");
     $("#main").innerHTML =
       bandHtml(roleLabel(u.role), u.name || "Your profile", "Your name is recorded against every trade you place.", [
-        ["Trades you placed", String(mine.length)], ["Last trade", mine.length ? esc(fmtDay(mine[mine.length - 1].created_at)) : "None yet"]], "", avatarHtml(u, "xl band-avatar")) +
+        ["Trades you placed", String(mine.length)], ["Last trade", mine.length ? esc(fmtDay(mine[mine.length - 1].created_at)) : "None yet"]], '<button type="button" class="btn ghost" data-action="tour">Take the tour again</button>', avatarHtml(u, "xl band-avatar")) +
       '<div class="profile-grid">' +
         '<div class="stack"><div class="card"><h2>Photo and name</h2>' +
           '<div class="photo-row">' + avatarHtml(u, "xl") +
@@ -1879,7 +1879,7 @@
         state.members = m;
         if (!membersSeenAt()) markMembersSeen();
       }).catch(function () { /* shown when the Members page is opened */ }) : null
-    ]).then(fillDueOrders).then(function () { loadAnnouncements(); }).then(function () {
+    ]).then(fillDueOrders).then(function () { loadAnnouncements(); setTimeout(maybeStartTour, 1400); }).then(function () {
       if (state.view === "signin" && state.user) state.view = "portfolio";
       // Members land on the portfolio. Visitors land on the home page.
       if (state.view === "home" && state.user && !state.navigated) state.view = "portfolio";
@@ -2338,6 +2338,208 @@
     }).catch(function (err) { toast("Photo not saved: " + err.message); });
   }
 
+  // ---------- price history chart ----------
+  var histCache = {};
+  function loadHistory(code) {
+    var c = histCache[code];
+    if (c && Date.now() - c.at < 300000) return Promise.resolve(c);
+    var info = state.prices[code] || {}, today = sydneyToday();
+    if (DEMO || !sb) {
+      // Demo mode has no saved prices, so it draws a sample path that ends at today's price.
+      var seed = 0, i; for (i = 0; i < code.length; i++) seed = (seed * 31 + code.charCodeAt(i)) % 2147483647;
+      seed = seed || 7;
+      var rnd = function () { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+      var n = 90, walk = [0], d = new Date(today + "T00:00:00Z"), days = [], pts = [];
+      for (i = 1; i < n; i++) walk.push(walk[i - 1] + rnd() * 0.03);
+      while (days.length < n) { if (d.getUTCDay() % 6 !== 0) days.unshift(d.toISOString().slice(0, 10)); d = new Date(d.getTime() - 86400000); }
+      var drift = (rnd() * 0.5);
+      for (i = 0; i < n; i++) { var w = i / (n - 1); pts.push({ day: days[i], close: info.price * Math.exp(walk[i] - walk[n - 1] * w - drift * (1 - w)) }); }
+      return Promise.resolve(histCache[code] = { points: info.price > 0 ? pts : [], sample: true, at: Date.now() });
+    }
+    return sb.from("price_history").select("day, close").eq("code", code).order("day", { ascending: true }).limit(800).then(function (r) {
+      var pts = r.error ? [] : r.data.map(function (x) { return { day: x.day, close: Number(x.close) }; }).filter(function (x) { return x.close > 0; });
+      if (info.price > 0 && tradedToday(info)) pts = pts.filter(function (x) { return x.day < today; }).concat([{ day: today, close: info.price }]);
+      return histCache[code] = { points: pts, sample: false, off: !!r.error, at: Date.now() };
+    }, function () { return { points: [], sample: false, off: true, at: Date.now() }; });
+  }
+  function priceChartSvg(pts) {
+    var W = 720, H = 240, m = { t: 14, r: 14, b: 26, l: 54 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    var lo = Infinity, hi = -Infinity;
+    pts.forEach(function (p) { lo = Math.min(lo, p.close); hi = Math.max(hi, p.close); });
+    var pad = (hi - lo) * 0.12 || hi * 0.02; lo -= pad; hi += pad;
+    var x = function (i) { return m.l + iw * i / (pts.length - 1); }, y = function (v) { return m.t + ih * (1 - (v - lo) / (hi - lo)); };
+    var up = pts[pts.length - 1].close >= pts[0].close, col = up ? "#3ecf8e" : "#ff7b72";
+    var line = pts.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.close).toFixed(1); }).join(" ");
+    var grid = "", k;
+    for (k = 0; k <= 3; k++) { var v = lo + (hi - lo) * k / 3; grid += '<line x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y(v).toFixed(1) + '" y2="' + y(v).toFixed(1) + '" class="chart-grid"/><text x="' + (m.l - 8) + '" y="' + (y(v) + 4).toFixed(1) + '" text-anchor="end" class="chart-tick">$' + v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0) + "</text>"; }
+    var lab = function (day) { return new Date(day + "T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", day: "numeric", month: "short" }); };
+    var ticks = [0, Math.round((pts.length - 1) / 2), pts.length - 1].filter(function (v, i, a) { return a.indexOf(v) === i; });
+    var xl = ticks.map(function (i, n) { return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="' + (n === 0 ? "start" : n === ticks.length - 1 ? "end" : "middle") + '" class="chart-tick">' + lab(pts[i].day) + "</text>"; }).join("");
+    var last = pts.length - 1;
+    return '<svg class="px-svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Line chart of the closing price"><defs><linearGradient id="pxg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + col + '" stop-opacity="0.32"/><stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient></defs>' + grid + xl +
+      '<path d="' + line + " L" + x(last).toFixed(1) + " " + (m.t + ih) + " L" + m.l + " " + (m.t + ih) + ' Z" fill="url(#pxg)" class="px-area"/>' +
+      '<path d="' + line + '" fill="none" stroke="' + col + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" pathLength="1" class="px-line"/>' +
+      '<circle cx="' + x(last).toFixed(1) + '" cy="' + y(pts[last].close).toFixed(1) + '" r="4.5" fill="' + col + '" stroke="#1c2029" stroke-width="2"/></svg>';
+  }
+  function priceCardHtml(code) { return '<div class="card" id="px-card" data-code="' + esc(code) + '"><div class="card-title-row"><h2>Price history</h2><span class="muted small">Loading</span></div><div class="sk px-wait"></div></div>'; }
+  function paintPriceCard(code) {
+    loadHistory(code).then(function (h) {
+      var el = $("#px-card");
+      if (!el || el.dataset.code !== code) return;
+      var pts = h.points, body, note = h.sample ? "Sample history for the demo" : "Daily closing price";
+      if (pts.length >= 2) {
+        var ch = pts[pts.length - 1].close / pts[0].close - 1, lo = Infinity, hi = -Infinity;
+        pts.forEach(function (p) { lo = Math.min(lo, p.close); hi = Math.max(hi, p.close); });
+        body = '<div class="px-stats"><span><b class="' + signClass(ch) + '">' + (ch >= 0 ? "+" : "") + fmtPct(ch) + "</b> over " + pts.length + " trading days</span><span>Low <b>" + fmtMoney(lo) + "</b></span><span>High <b>" + fmtMoney(hi) + "</b></span></div>" + priceChartSvg(pts);
+      } else {
+        body = '<div class="chart-empty"><svg viewBox="0 0 240 70" width="240" height="70" aria-hidden="true"><path d="M4 58 C40 50 60 54 92 40 S150 34 178 20 S220 16 236 8" fill="none" stroke="#3a3e47" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round"/></svg>' +
+          "<p><strong>The chart is still collecting.</strong><br>" + (h.off ? "Price history needs the latest database update to be run." : "The closing price is saved each trading day. Once there are two days on record, the chart appears here.") + "</p></div>";
+      }
+      el.innerHTML = '<div class="card-title-row"><h2>Price history</h2><span class="muted small">' + note + "</span></div>" + body;
+    });
+  }
+
+  // ---------- scoreboard ----------
+  function scoreboardHtml() {
+    var by = {}, get = function (name) { return by[name] || (by[name] = { name: name, buys: 0, wins: 0, moveSum: 0, gain: 0, sent: 0, approved: 0 }); };
+    state.trades.forEach(function (t) {
+      if (t.type !== "buy" || !t.trader_name || t.trader_name === "System" || t.code === CFG.ETF_CODE) return;
+      var info = state.prices[t.code];
+      if (!info || !(info.price > 0) || !(t.price > 0)) return;
+      var s = get(t.trader_name), move = info.price / t.price - 1;
+      s.buys++; s.moveSum += move; s.gain += (info.price - t.price) * t.quantity; if (move > 0) s.wins++;
+    });
+    state.proposals.forEach(function (x) { if (!x.trader_name) return; var s = get(x.trader_name); s.sent++; if (x.status === "approved") s.approved++; });
+    var list = Object.keys(by).map(function (k) { return by[k]; }).filter(function (s) { return s.buys > 0 || s.sent > 0; })
+      .sort(function (a, b) { return (b.buys > 0) - (a.buys > 0) || b.gain - a.gain || b.approved - a.approved; });
+    if (!list.some(function (s) { return s.buys > 0; })) return "";
+    var showIdeas = list.some(function (s) { return s.sent > 0; }), medal = ["gold", "silver", "bronze"];
+    return '<div class="card flush"><div class="card-head"><h2>Scoreboard</h2><span class="muted small">How each person\'s stock picks have moved since they were bought</span></div>' +
+      '<div class="table-scroll"><table class="score"><thead><tr><th>Rank</th><th>Person</th>' + (showIdeas ? '<th class="num">Proposals</th>' : "") + '<th class="num">Buys</th><th class="num">In profit</th><th class="num">Average move</th><th class="num">Gain since buying</th></tr></thead><tbody>' +
+      list.map(function (s, i) {
+        var avg = s.buys ? s.moveSum / s.buys : 0;
+        return '<tr><td><span class="rank ' + (s.buys && medal[i] ? medal[i] : "") + '">' + (i + 1) + '</span></td><td><span class="co"><span class="avatar sm" aria-hidden="true">' + esc(initials(s.name)) + "</span><b>" + esc(s.name) + "</b></span></td>" +
+          (showIdeas ? '<td class="num">' + (s.sent ? s.approved + " of " + s.sent + " approved" : '<span class="muted">None</span>') + "</td>" : "") +
+          '<td class="num">' + s.buys + '</td><td class="num">' + (s.buys ? s.wins + " of " + s.buys : "") + '</td><td class="num ' + signClass(avg) + '">' + (s.buys ? (avg >= 0 ? "+" : "") + fmtPct(avg) : "") + '</td><td class="num ' + signClass(s.gain) + '"><b>' + (s.buys ? (s.gain >= 0 ? "+" : "") + fmtMoney(s.gain) : "") + "</b></td></tr>";
+      }).join("") + "</tbody></table></div></div>";
+  }
+
+  // ---------- notification bell ----------
+  function seenKey() { return "lighthouse_seen_" + (DEMO ? "demo" : state.user ? state.user.id : "none"); }
+  function seenAt() { var v = null; try { v = localStorage.getItem(seenKey()); } catch (e) { /* storage unavailable */ } if (!v) { v = new Date().toISOString(); try { localStorage.setItem(seenKey(), v); } catch (e2) { /* storage unavailable */ } } return v; }
+  function notifItems() {
+    if (!state.user || locked()) return [];
+    var items = activityEvents().filter(function (e) { return e.kind !== "start"; }).map(function (e) { return { at: e.at, kind: e.kind, title: e.title, sub: e.sub + (e.who && e.who !== "System" ? " · " + e.who : ""), mine: e.who === state.user.name && e.kind !== "ok" && e.kind !== "no", code: e.code }; });
+    var want = {}; annCodes().forEach(function (c) { want[c] = true; });
+    state.ann.forEach(function (a) { if (a.price_sensitive && want[a.code] && !a.sample) items.push({ at: a.announced_at, kind: "ann", title: a.code + ": " + a.headline, sub: "Price-sensitive ASX announcement", code: a.code }); });
+    items.sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+    var flags = [];
+    computePortfolio(state.trades).positions.forEach(function (p) { var f = levelFlag(p); if (f) flags.push({ at: null, kind: f.cls === "bad" ? "no" : "ok", title: p.code + (f.cls === "bad" ? " has fallen to its review price" : " has reached its price target"), sub: "Now " + fmtMoney(p.price), code: p.code, flag: true }); });
+    return flags.concat(items).slice(0, 14);
+  }
+  function unreadCount() { var s = seenAt(); return notifItems().filter(function (n) { return n.flag ? false : n.at > s && !n.mine; }).length + notifItems().filter(function (n) { return n.flag; }).length; }
+  function bellHtml() {
+    if (!state.user) return "";
+    var n = unreadCount();
+    return '<button type="button" class="bell' + (n ? " has" : "") + '" data-action="bell" aria-label="Notifications' + (n ? ", " + n + " new" : "") + '" aria-expanded="' + !!$("#bell-panel") + '"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg>' + (n ? '<span class="bell-count">' + (n > 9 ? "9+" : n) + "</span>" : "") + "</button>";
+  }
+  function closeBell() { var p = $("#bell-panel"); if (p) p.remove(); }
+  function toggleBell() {
+    if ($("#bell-panel")) return closeBell();
+    var s = seenAt(), list = notifItems(), glyph = { buy: "↑", sell: "↓", div: "$", prop: "?", ok: "✓", no: "!", wait: "…", ann: "A" };
+    var el = document.createElement("div");
+    el.id = "bell-panel"; el.className = "bell-panel"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Notifications");
+    el.innerHTML = '<div class="bell-head"><b>Notifications</b><span class="muted small">Since your last look</span></div>' +
+      (list.length ? '<ul class="bell-list">' + list.map(function (n) {
+        var fresh = n.flag || (n.at > s && !n.mine);
+        return '<li><button type="button" class="bell-item' + (fresh ? " fresh" : "") + '"' + (n.code ? ' data-stock="' + esc(n.code) + '"' : ' data-view="history"') + '><span class="act-dot k-' + n.kind + '" aria-hidden="true">' + (glyph[n.kind] || "•") + '</span><span class="bell-main"><span class="bell-title">' + esc(n.title) + '</span><span class="muted small">' + esc(n.sub) + '</span></span><span class="bell-when">' + (n.at ? esc(ago(n.at)) : "Now") + "</span></button></li>";
+      }).join("") + "</ul>" : '<p class="muted small bell-empty">Nothing yet. Trades, proposals, filled orders and price-sensitive announcements show up here.</p>');
+    document.body.appendChild(el);
+    var b = $(".bell").getBoundingClientRect();
+    el.style.top = Math.round(b.bottom + 10) + "px";
+    el.style.right = Math.max(8, Math.round(window.innerWidth - b.right - 8)) + "px";
+    try { localStorage.setItem(seenKey(), new Date().toISOString()); } catch (e) { /* storage unavailable */ }
+    var bell = $(".bell"); if (bell) { var c = bell.querySelector(".bell-count"); if (c && !list.some(function (n) { return n.flag; })) { c.remove(); bell.classList.remove("has"); } bell.setAttribute("aria-expanded", "true"); }
+  }
+  document.addEventListener("click", function (e) {
+    if ($("#bell-panel") && !e.target.closest("#bell-panel") && !e.target.closest(".bell")) closeBell();
+    else if (e.target.closest(".bell-item")) closeBell();
+  }, true);
+
+  // ---------- first-visit tour ----------
+  var tour = null;
+  function tourKey() { return "lighthouse_tour_" + (DEMO ? "demo" : state.user ? state.user.id : "none"); }
+  function tourSteps() {
+    var phone = window.innerWidth <= 700;
+    var all = [
+      [null, "Welcome to the Lighthouse Fund", "A quick look around takes about thirty seconds. You can skip it and replay it later from your profile."],
+      ['#nav [data-view="portfolio"]', "Portfolio", "What the fund owns, how it is performing against the index, the watchlist, ASX announcements and who is picking the winners."],
+      ['#nav [data-view="trade"]', "Trade", canTrade() ? (isAdmin() ? "Place orders here and approve or reject the trades your analysts propose." : "Pick a stock, write your case and send the trade to the Fund Manager for approval.") : "Analysts and the Fund Manager place orders here. Your account can watch but not trade."],
+      ['#nav [data-view="companies"]', "Companies", "The whole ASX 300 as a heat map. Click any company for its own page with a price chart, the fund's position and its announcements."],
+      ['#nav [data-view="history"]', "History", "Every trade the fund has ever made, permanently on the record. You can download it as a spreadsheet."],
+      ['#nav [data-view="report"]', "Report", "A one-page monthly report that prints to PDF, with the Fund Manager's comment."],
+      [".bell", "Notifications", "The bell lights up when something happens: a trade, a decision on a proposal, a filled order or a price-sensitive announcement."],
+      [phone ? ".me" : ".me", "Your profile", "Change your name, photo and password here. This is also where you can take this tour again."]
+    ];
+    return all.filter(function (s) { return !s[0] || $(s[0]); });
+  }
+  function startTour() {
+    endTour(false);
+    var el = document.createElement("div");
+    el.id = "tour"; el.className = "tour";
+    el.innerHTML = '<div class="tour-ring"></div><div class="tour-tip" role="dialog" aria-modal="true" aria-live="polite"></div>';
+    document.body.appendChild(el);
+    tour = { i: 0, steps: tourSteps() };
+    showTourStep();
+  }
+  function showTourStep() {
+    var el = $("#tour"); if (!el || !tour) return;
+    var s = tour.steps[tour.i], ring = el.querySelector(".tour-ring"), tip = el.querySelector(".tour-tip"), last = tour.i === tour.steps.length - 1;
+    tip.innerHTML = '<div class="tour-step">' + (tour.i + 1) + " of " + tour.steps.length + '</div><h3>' + esc(s[1]) + "</h3><p>" + esc(s[2]) + '</p><div class="tour-actions"><button type="button" class="link small" data-tour="skip">' + (last ? "" : "Skip") + "</button><span>" +
+      (tour.i ? '<button type="button" class="btn secondary small-btn" data-tour="back">Back</button> ' : "") + '<button type="button" class="btn small-btn" data-tour="next">' + (last ? "Finish" : tour.i ? "Next" : "Show me") + "</button></span></div>" +
+      '<div class="tour-dots">' + tour.steps.map(function (_, k) { return '<i class="' + (k === tour.i ? "on" : "") + '"></i>'; }).join("") + "</div>";
+    var target = s[0] && $(s[0]);
+    if (!target) {
+      ring.style.cssText = "left:50%;top:50%;width:0;height:0;border-radius:50%";
+      tip.style.left = Math.max(12, (window.innerWidth - tip.offsetWidth) / 2) + "px";
+      tip.style.top = Math.max(12, (window.innerHeight - tip.offsetHeight) / 2) + "px";
+    } else {
+      var r = target.getBoundingClientRect(), pad = 6;
+      ring.style.cssText = "left:" + (r.left - pad) + "px;top:" + (r.top - pad) + "px;width:" + (r.width + pad * 2) + "px;height:" + (r.height + pad * 2) + "px;border-radius:" + Math.min(999, r.height) + "px";
+      var below = r.bottom + 16 + tip.offsetHeight < window.innerHeight;
+      tip.style.left = Math.max(12, Math.min(window.innerWidth - tip.offsetWidth - 12, r.left + r.width / 2 - tip.offsetWidth / 2)) + "px";
+      tip.style.top = (below ? r.bottom + 16 : Math.max(12, r.top - 16 - tip.offsetHeight)) + "px";
+    }
+    var nx = tip.querySelector('[data-tour="next"]'); if (nx) nx.focus({ preventScroll: true });
+  }
+  function endTour(remember) {
+    var el = $("#tour"); if (el) el.remove();
+    tour = null;
+    if (remember) { try { localStorage.setItem(tourKey(), "done"); } catch (e) { /* storage unavailable */ } }
+  }
+  function maybeStartTour() {
+    var done = false; try { done = localStorage.getItem(tourKey()) === "done"; } catch (e) { done = true; }
+    if (done || tour || !state.user || state.user.needsCharter || document.querySelector(".modal") || state.view === "signin") return;
+    window.scrollTo(0, 0);
+    startTour();
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-tour]");
+    if (!b || !tour) { if (tour && e.target.closest && e.target.closest("#tour") && !e.target.closest(".tour-tip")) { e.stopPropagation(); } return; }
+    e.stopPropagation();
+    if (b.dataset.tour === "skip") return endTour(true);
+    if (b.dataset.tour === "back") { tour.i = Math.max(0, tour.i - 1); return showTourStep(); }
+    if (tour.i >= tour.steps.length - 1) return endTour(true);
+    tour.i++; showTourStep();
+  }, true);
+  document.addEventListener("keydown", function (e) {
+    if (!tour) return;
+    if (e.key === "Escape") { e.stopPropagation(); endTour(true); }
+    else if (e.key === "ArrowRight") { if (tour.i >= tour.steps.length - 1) endTour(true); else { tour.i++; showTourStep(); } }
+    else if (e.key === "ArrowLeft") { tour.i = Math.max(0, tour.i - 1); showTourStep(); }
+  }, true);
+  window.addEventListener("resize", function () { if (tour) showTourStep(); closeBell(); });
+
   // ---------- watchlist ----------
   // Shared by the whole fund once the database has the table. Until then it is kept in this browser.
   var LS_WATCH = DEMO ? "lighthouse_demo_watch" : "lighthouse_watch_local";
@@ -2601,6 +2803,7 @@
     var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone;
     var seen = false; try { seen = localStorage.getItem(LS_INSTALL) === "done"; } catch (e) { /* storage unavailable */ }
     var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if ($("#tour")) { setTimeout(showInstall, 8000); return; }
     if (standalone || seen || $("#install-hint") || window.innerWidth > 700 || (!installEvt && !ios)) return;
     var el = document.createElement("div");
     el.id = "install-hint"; el.className = "install-hint";
@@ -2660,7 +2863,7 @@
       bandHtml(p.sector || "Company", p.name || p.code, "ASX: " + esc(p.code) + (h ? ' · <b class="held-flag">Held by the fund</b>' : ""), [
         ["Price", fmtMoney(p.price)], ["Today", fmtChange(p.change_pct), signClass(p.change_pct)], ["Market cap", fmtCap(p.market_cap)], h ? ["Fund holds", whole(h.value)] : ["Sector", esc(p.sector || "Unknown")]],
         actions, '<span class="mono big' + (h ? " held" : "") + '" aria-hidden="true">' + esc(p.code.slice(0, 3)) + "</span>") +
-      '<div class="grid-2"><div class="stack">' + today +
+      '<div class="grid-2"><div class="stack">' + priceCardHtml(p.code) + today +
         (thesis ? '<div class="card thesis"><h2>Why the fund holds it</h2><p>' + esc(thesis) + "</p></div>" : "") +
         (open ? '<div class="card flush"><div class="card-head"><h2>The fund\'s trades in ' + esc(p.code) + "</h2></div>" + (tradeRows ? '<div class="table-scroll"><table><thead><tr><th>When</th><th>Type</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>By</th></tr></thead><tbody>' + tradeRows + "</tbody></table></div>" : '<p class="empty">No trades in this stock yet.</p>') + "</div>" : "") +
       announcementsCardHtml(p.code) +
@@ -2669,6 +2872,7 @@
         (peers.length ? '<div class="card"><h2>Others in ' + esc(p.sector) + '</h2><div class="peers">' + peers.map(function (x) {
           return '<button type="button" class="mover" data-stock="' + esc(x.code) + '"><span><b>' + esc(x.code) + '</b><span class="muted small">' + esc(x.name) + '</span></span><span class="num ' + signClass(x.change_pct) + '">' + fmtChange(x.change_pct) + "</span></button>"; }).join("") + "</div></div>" : "") +
       "</div></div>";
+    paintPriceCard(p.code);
   }
 
   // ---------- order receipt ----------
@@ -2720,7 +2924,7 @@
     if (s < 86400 * 7) return Math.round(s / 86400) + (Math.round(s / 86400) === 1 ? " day ago" : " days ago");
     return fmtDay(iso);
   }
-  function activityCardHtml() {
+  function activityEvents() {
     var ev = [];
     state.trades.forEach(function (t) {
       if (t.type === "buy" || t.type === "sell") ev.push({ at: t.created_at, kind: t.type, title: (t.type === "buy" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " " + t.code, sub: "at " + fmtPrice(t.price) + " · " + fmtMoney(t.quantity * t.price), who: t.trader_name, code: t.code });
@@ -2736,6 +2940,10 @@
       ev.push({ at: o.created_at, kind: "wait", title: (o.kind === "market" ? "Order queued: " : "Limit order: ") + (o.side === "buy" ? "buy " : "sell ") + fmtQty(o.quantity) + " " + o.code, sub: o.kind === "market" ? "Fills at the next open" : "Waiting for " + fmtMoney(o.limit_price), who: o.trader_name, code: o.code });
     });
     ev.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+    return ev;
+  }
+  function activityCardHtml() {
+    var ev = activityEvents();
     var glyph = { buy: "↑", sell: "↓", div: "$", start: "★", prop: "?", ok: "✓", no: "✕", wait: "…" };
     var rows = ev.slice(0, 8).map(function (e, i) {
       return '<li class="act ' + e.kind + '" style="--d:' + (i * 70) + 'ms"><span class="act-dot" aria-hidden="true">' + glyph[e.kind] + '</span><div class="act-main"><div class="act-title">' + esc(e.title) + '</div><div class="muted small">' + esc(e.sub) + "</div></div>" +
@@ -2821,6 +3029,8 @@
     else if (a === "toggle-heat") { try { localStorage.setItem(LS_HEAT, heatOn() ? "off" : "on"); } catch (err) { /* storage unavailable */ } hideTip(); paintHeatmap(); }
     else if (a === "install-app") { if (installEvt) { installEvt.prompt(); installEvt = null; } closeInstall(true); }
     else if (a === "install-close") closeInstall(true);
+    else if (a === "bell") toggleBell();
+    else if (a === "tour") { go("portfolio"); setTimeout(startTour, 350); }
     else if (a === "watch-cancel") closeWatch();
     else if (a === "watch-save") saveWatch();
     else if (a === "dividend-open") openDividend();
