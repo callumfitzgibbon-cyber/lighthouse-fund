@@ -26,7 +26,7 @@
     pricesUpdated: null,
     pricesAreSample: false,
     priceError: null,
-    order: { code: null, side: "buy", qtyMode: "shares", qty: "", amount: "", type: "market", limit: "", sleeve: "competition", approval: "", rationale: "" },
+    order: { code: null, side: "buy", qtyMode: "shares", qty: "", amount: "", type: "market", limit: "", expiry: "gtc", sleeve: "competition", approval: "", rationale: "" },
     orders: [], // open orders: limit orders, and market orders waiting for the open
     ordersOff: false, // true until the database has the orders table
     queueOff: false, // true until the database can hold market orders for the open
@@ -38,6 +38,9 @@
     search: "",
     sector: "",
     stock: null, // the company page being looked at
+    watch: [], watchOn: false, // the watchlist, and whether the database holds it
+    ann: [], annOn: false, annSource: "", // ASX announcements
+    expiryOn: false, // true when the database can expire orders
     receipt: null,
     coSearch: "",
     members: [],
@@ -219,10 +222,16 @@
       return list;
     },
     writeOrders: function (list) { try { localStorage.setItem(LS_ORDERS, JSON.stringify(list)); } catch (e) { /* storage unavailable */ } },
-    listOrders: function () { return Promise.resolve(demoStore.readOrders().filter(function (o) { return o.status === "open"; })); },
+    listOrders: function () {
+      state.expiryOn = true;
+      var list = demoStore.readOrders(), changed = false;
+      list.forEach(function (o) { if (o.status === "open" && isExpired(o)) { o.status = "expired"; changed = true; } });
+      if (changed) demoStore.writeOrders(list);
+      return Promise.resolve(list.filter(function (o) { return o.status === "open"; }));
+    },
     placeOrder: function (o) {
       var list = demoStore.readOrders();
-      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, kind: o.kind || "limit", note: o.note || null, placed_low: o.placed_low || null, placed_high: o.placed_high || null, status: "open", trader_name: o.trader_name || state.user.name, created_by: state.user.id });
+      list.push({ id: list.length + 1, created_at: new Date().toISOString(), side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, kind: o.kind || "limit", note: o.note || null, placed_low: o.placed_low || null, placed_high: o.placed_high || null, expires_at: o.expires_at || null, status: "open", trader_name: o.trader_name || state.user.name, created_by: state.user.id });
       demoStore.writeOrders(list);
       return Promise.resolve();
     },
@@ -364,7 +373,14 @@
         }, function () { state.orderCheck = null; });
         var rows = r.data.map(function (o) { o.quantity = Number(o.quantity); o.limit_price = Number(o.limit_price); o.placed_low = Number(o.placed_low) || 0; o.placed_high = Number(o.placed_high) || 0; o.kind = o.kind || "limit"; return o; });
         // Market orders can only wait for the open once the database has been given the column for it.
-        return sb.from("orders").select("kind").limit(1).then(function (k) { state.queueOff = !!k.error; return rows; }, function () { state.queueOff = true; return rows; });
+        return sb.from("orders").select("kind").limit(1).then(function (k) { state.queueOff = !!k.error; return rows; }, function () { state.queueOff = true; return rows; })
+          .then(function (rows2) {
+            return sb.from("orders").select("expires_at").limit(1).then(function (x) { state.expiryOn = !x.error; }, function () { state.expiryOn = false; }).then(function () {
+              if (!state.expiryOn || !rows2.some(isExpired)) return rows2;
+              // Close the ones that ran out, then leave them off the list.
+              return sb.rpc("expire_orders").then(function () { return rows2.filter(function (o) { return !isExpired(o); }); }, function () { return rows2.filter(function (o) { return !isExpired(o); }); });
+            });
+          });
       });
     },
     listProposals: function () {
@@ -406,7 +422,7 @@
     placeOrder: function (o) {
       var row = Object.assign({
         side: o.side, code: o.code, sleeve: o.sleeve, quantity: o.quantity, limit_price: o.limit_price, trader_name: o.trader_name || state.user.name
-      }, o.approval ? { approval_code: o.approval } : {}, o.kind === "market" ? { kind: "market" } : {}, o.note && !state.queueOff ? { note: o.note } : {});
+      }, o.approval ? { approval_code: o.approval } : {}, o.kind === "market" ? { kind: "market" } : {}, o.note && !state.queueOff ? { note: o.note } : {}, o.expires_at && state.expiryOn ? { expires_at: o.expires_at } : {});
       var range = o.placed_low > 0 && o.placed_high > 0 ? { placed_low: o.placed_low, placed_high: o.placed_high } : null;
       var insert = function (extra) { return sb.from("orders").insert(Object.assign({}, row, extra || {})); };
       return insert(range).then(function (r) {
@@ -903,7 +919,7 @@
         "</tbody></table></div></div>" + performanceCardHtml(perf) + attributionCardHtml() + sectorCardHtml(pf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" + riskCardHtml(perf) +
-          activityCardHtml() +
+          watchCardHtml() + announcementsCardHtml("") + activityCardHtml() +
         "</div>" +
       "</div>";
     drawPerformance(perf);
@@ -1376,7 +1392,8 @@
           '<div class="table-scroll list-scroll"><table><thead><tr><th>Stock</th><th class="hide-sm">Sector</th><th class="num">Price</th><th class="num"></th></tr></thead><tbody id="universe">' + universeRows() + "</tbody></table></div></div>" +
         '<div class="card ticket" id="ticket"></div>' +
       "</div>" +
-      '<div id="open-orders"></div>';
+      '<div id="open-orders"></div>' +
+      '<div class="trade-watch">' + watchCardHtml() + "</div>";
     renderTicket();
     renderOpenOrders();
     renderProposals();
@@ -1400,7 +1417,7 @@
         var info = state.prices[o.code];
         var mine = isAdmin() || (state.user && o.created_by === state.user.id);
         return '<tr><td class="nowrap">' + esc(fmtDate(o.created_at)) + '</td><td><span class="pill ' + o.side + '">' + (o.side === "buy" ? "Buy" : "Sell") + "</span></td>" +
-          '<td class="code">' + esc(o.code) + '</td><td class="num">' + fmtQty(o.quantity) + '</td><td class="num">' + (o.kind === "market" ? '<span class="pill">Market, at the open</span>' : fmtMoney(o.limit_price)) + "</td>" +
+          '<td class="code">' + esc(o.code) + '</td><td class="num">' + fmtQty(o.quantity) + '</td><td class="num">' + (o.kind === "market" ? '<span class="pill">Market, at the open</span>' : fmtMoney(o.limit_price) + (o.expires_at ? '<div class="muted small nowrap">until ' + esc(fmtDate(o.expires_at)) + "</div>" : "")) + "</td>" +
           '<td class="num">' + (info && info.price > 0 ? fmtMoney(info.price) : "No price") + '</td><td class="num nowrap">' + (info && tradedToday(info) && info.day_low > 0 ? fmtMoney(info.day_low) + " to " + fmtMoney(info.day_high) : "") + '</td><td class="nowrap">' + esc(o.trader_name || "") + "</td>" +
           '<td class="num">' + (DEMO && info && info.price > 0 ? '<button type="button" class="btn secondary small-btn" data-fill-order="' + esc(o.id) + '" title="Demo mode only">Fill now</button> ' : "") +
             (mine ? '<button type="button" class="btn secondary small-btn" data-cancel-order="' + esc(o.id) + '">Cancel</button>' : "") + "</td></tr>";
@@ -1438,6 +1455,7 @@
           ? '<div class="money-input"><span>$</span><input id="limit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="' + info.price.toFixed(2) + '" value="' + esc(o.limit) + '"></div>'
           : '<div class="static-field">' + fmtPrice(quote(info, o.side)) + ' <span class="muted small">' + (SPREAD > 0 ? (o.side === "buy" ? "buy" : "sell") + " price, " + fmtPct(SPREAD, 1) + (o.side === "buy" ? " above" : " below") + " the quote" : "current price") +
             (fillsNow(info) || state.queueOff || state.ordersOff ? ", fills straight away" : ". Market closed: fills at the next open") + "</span></div>") + "</div>" +
+      (o.type === "limit" && state.expiryOn ? '<div class="field"><label for="expiry">Good for</label><select id="expiry">' + EXPIRY.map(function (x) { return '<option value="' + x[0] + '"' + (o.expiry === x[0] ? " selected" : "") + ">" + x[1] + "</option>"; }).join("") + "</select></div>" : "") +
       sleeveField +
       (needsCode() ? '<div class="field"><label for="approval">Codephrase from the fund manager</label><input id="approval" class="code-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" placeholder="three words, for example amber harbour beacon" value="' + esc(o.approval) + '"><div class="muted small" style="margin-top:5px">Every trade goes through the fund manager. Ask them for the current three-word codephrase. It changes every 5 minutes.</div></div>' : "") +
       (needsProposal() ? '<div class="field"><label for="rationale">Your case for this trade</label><textarea id="rationale" rows="3" maxlength="600" placeholder="Why this stock, why now, and what would change your mind.">' + esc(o.rationale) + '</textarea><div class="muted small" style="margin-top:5px">This goes to the Fund Manager, who approves or rejects the trade. Nothing is placed until then.</div></div>' : "") +
@@ -1555,7 +1573,7 @@
         '<td class="num">' + fmtCap(p.market_cap) + "</td>" +
         '<td class="num"><div class="row-links"><a href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Info' + ICON.ext + "</a>" +
           '<a href="' + bookUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Order book' + ICON.ext + "</a>" +
-          (canTrade() ? '<button type="button" class="btn small-btn" data-trade="' + esc(p.code) + '">Trade</button>' : "") + "</div></td></tr>";
+          (canTrade() ? '<button type="button" class="btn small-btn" data-trade="' + esc(p.code) + '">Trade</button>' : "") + watchBtn(p.code) + "</div></td></tr>";
     }).join("") || '<tr><td colspan="6" class="empty">No companies match.</td></tr>';
   }
 
@@ -1853,6 +1871,7 @@
       locked() ? null : store.listOrders().then(function (o) { state.orders = o; }).catch(function () { state.orders = []; }),
       locked() ? null : store.listSnapshots().then(function (h) { state.snapshots = h; }).catch(function () { state.snapshots = []; }),
       locked() ? (state.proposals = [], state.levels = {}, null) : store.listProposals().then(function (l) { state.proposals = l; }).catch(function () { state.proposals = []; state.proposalsOn = false; }),
+      locked() ? (state.watch = [], null) : listWatch().then(function (l) { state.watch = l; }),
       locked() ? null : store.listLevels().then(function (m) { state.levels = m; }).catch(function () { state.levels = {}; state.levelsOn = false; }),
       locked() ? null : store.getReport(sydneyToday().slice(0, 7)).then(function (r) { state.report = r; }).catch(function () { state.report = { month: sydneyToday().slice(0, 7), comment: "" }; }),
       // The fund manager's member list, so the Members tab can flag new sign-ups.
@@ -1860,7 +1879,7 @@
         state.members = m;
         if (!membersSeenAt()) markMembersSeen();
       }).catch(function () { /* shown when the Members page is opened */ }) : null
-    ]).then(fillDueOrders).then(function () {
+    ]).then(fillDueOrders).then(function () { loadAnnouncements(); }).then(function () {
       if (state.view === "signin" && state.user) state.view = "portfolio";
       // Members land on the portfolio. Visitors land on the home page.
       if (state.view === "home" && state.user && !state.navigated) state.view = "portfolio";
@@ -1888,6 +1907,7 @@
     state.order.qty = "";
     state.order.amount = "";
     state.order.limit = "";
+    state.order.expiry = "gtc";
     state.order.approval = "";
     state.order.rationale = "";
   }
@@ -1906,11 +1926,11 @@
     var verb = o.side === "buy" ? "Buy" : "Sell";
     if (n.waits) {
       return store.placeOrder({ side: o.side, code: info.code, sleeve: sleeve, quantity: qty, limit_price: n.queued ? n.price : n.limit, kind: n.queued ? "market" : "limit",
-        approval: opts.approval || "", trader_name: opts.trader_name, note: opts.note, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0 })
+        approval: opts.approval || "", trader_name: opts.trader_name, note: opts.note, placed_low: tradedToday(info) ? info.day_low : 0, placed_high: tradedToday(info) ? info.day_high : 0, expires_at: n.queued ? null : expiryDate(o.expiry) })
         .then(function () { return store.listOrders(); })
         .then(function (list) {
           state.orders = list;
-          state.receipt = { status: n.queued ? "queued" : "limit", side: o.side, code: info.code, name: info.name, qty: qty, price: n.queued ? n.price : n.limit, sleeve: sleeve, by: state.user.name, proposer: opts.trader_name };
+          state.receipt = { status: n.queued ? "queued" : "limit", side: o.side, code: info.code, name: info.name, qty: qty, price: n.queued ? n.price : n.limit, sleeve: sleeve, by: state.user.name, proposer: opts.trader_name, expires: n.queued || !state.expiryOn ? null : expiryDate(o.expiry) };
           return n.queued ? "Order queued for the open: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code : "Limit order placed: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit);
         });
     }
@@ -1924,7 +1944,7 @@
   // The words for the box that asks someone to confirm an order.
   function orderConfirmText(o) {
     var info = state.prices[o.code], n = orderNumbers(o, info), verb = o.side === "buy" ? "Buy" : "Sell";
-    if (n.pending) return { title: "Place this limit order?", body: verb + " " + fmtQty(n.qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there while the market is open, and can be cancelled before then.", ok: "Place order" };
+    if (n.pending) return { title: "Place this limit order?", body: verb + " " + fmtQty(n.qty) + " " + info.code + " at " + fmtMoney(n.limit) + " or " + (o.side === "buy" ? "lower" : "higher") + ". It waits until the price gets there while the market is open" + (state.expiryOn && expiryDate(o.expiry) ? ", and lapses on " + fmtDate(expiryDate(o.expiry)) + " if it has not filled" : "") + ". It can be cancelled before then.", ok: "Place order" };
     if (n.queued) return { title: "Queue this order for the open?", body: verb + " " + fmtQty(n.qty) + " " + info.code + ". The market is closed, so it fills at the price when trading starts again. That may differ from the " + fmtPrice(n.price) + " shown now. You can cancel it before then.", ok: "Queue order" };
     return { title: verb + " " + fmtQty(n.qty) + " " + info.code + " at " + fmtPrice(n.price) + "?", body: "This is recorded permanently and cannot be undone.", ok: verb + " " + info.code };
   }
@@ -2087,7 +2107,7 @@
     // The real record is never filled from sample prices.
     if (state.pricesAreSample && !DEMO) return Promise.resolve();
     var due = state.orders.filter(function (o) {
-      o.fillAt = fillPriceFor(o, state.prices[o.code]);
+      o.fillAt = isExpired(o) ? 0 : fillPriceFor(o, state.prices[o.code]);
       return o.fillAt > 0;
     });
     if (!due.length) return Promise.resolve();
@@ -2318,6 +2338,172 @@
     }).catch(function (err) { toast("Photo not saved: " + err.message); });
   }
 
+  // ---------- watchlist ----------
+  // Shared by the whole fund once the database has the table. Until then it is kept in this browser.
+  var LS_WATCH = DEMO ? "lighthouse_demo_watch" : "lighthouse_watch_local";
+  function readLocalWatch() { try { return JSON.parse(localStorage.getItem(LS_WATCH) || "[]") || []; } catch (e) { return []; } }
+  function writeLocalWatch(list) { try { localStorage.setItem(LS_WATCH, JSON.stringify(list)); } catch (e) { /* storage unavailable */ } }
+  function listWatch() {
+    if (DEMO || !sb) { state.watchOn = false; return Promise.resolve(readLocalWatch()); }
+    return sb.from("watchlist").select("*").order("created_at", { ascending: false }).then(function (r) {
+      if (r.error) { state.watchOn = false; return readLocalWatch(); }
+      state.watchOn = true;
+      return r.data.map(function (w) { w.ref_price = Number(w.ref_price) || 0; return w; });
+    }, function () { state.watchOn = false; return readLocalWatch(); });
+  }
+  function canWatch() { return !!state.user && (state.watchOn ? canTrade() : true); }
+  function isWatched(code) { return state.watch.some(function (w) { return w.code === code; }); }
+  function addWatch(code, note) {
+    var info = state.prices[code] || {}, row = { code: code, note: note || null, ref_price: info.price > 0 ? info.price : null, added_name: state.user.name };
+    if (state.watchOn) return sb.from("watchlist").insert(row).then(function (r) { if (r.error && !/duplicate/i.test(r.error.message)) throw new Error(r.error.message); }).then(listWatch);
+    var list = readLocalWatch().filter(function (w) { return w.code !== code; });
+    list.unshift(Object.assign(row, { created_at: new Date().toISOString() }));
+    writeLocalWatch(list);
+    return Promise.resolve(list);
+  }
+  function removeWatch(code) {
+    if (state.watchOn) return sb.from("watchlist").delete().eq("code", code).then(function (r) { if (r.error) throw new Error(r.error.message); }).then(listWatch);
+    var list = readLocalWatch().filter(function (w) { return w.code !== code; });
+    writeLocalWatch(list);
+    return Promise.resolve(list);
+  }
+  var STAR = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-3-5.4 3 1.1-6L3.2 9.6l6.1-.8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+  function watchBtn(code, label) {
+    if (!canWatch()) return "";
+    var on = isWatched(code);
+    return '<button type="button" class="' + (label ? "btn ghost " : "") + "watch-btn" + (on ? " on" : "") + '" data-watch="' + esc(code) + '" aria-pressed="' + on + '" title="' + (on ? "Remove from the watchlist" : "Add to the watchlist") + '">' + STAR + (label ? "<span>" + (on ? "Watching" : "Watch") + "</span>" : '<span class="sr-only">' + (on ? "Remove " : "Add ") + esc(code) + (on ? " from" : " to") + " the watchlist</span>") + "</button>";
+  }
+  function closeWatch() { var el = $("#watch-modal"); if (el) el.remove(); }
+  function toggleWatch(code) {
+    if (!canWatch()) return;
+    if (isWatched(code)) {
+      return removeWatch(code).then(function (l) { state.watch = l; toast(code + " removed from the watchlist"); refreshWatchViews(); loadAnnouncements(true); }).catch(function (e) { toast("Not removed: " + e.message); });
+    }
+    closeWatch();
+    var info = state.prices[code] || {};
+    var el = document.createElement("div");
+    el.className = "modal"; el.id = "watch-modal"; el.dataset.code = code;
+    el.innerHTML = '<div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="watch-title"><h2 id="watch-title">Watch ' + esc(code) + "</h2>" +
+      '<p class="muted small">' + esc(info.name || "") + (info.price > 0 ? " is " + fmtMoney(info.price) + " now. The watchlist tracks how it moves from here." : "") + (state.watchOn ? " Everyone in the fund sees the watchlist." : "") + "</p>" +
+      '<div class="field"><label for="watch-note">Why is it worth watching? (optional)</label><input id="watch-note" type="text" maxlength="200" autocomplete="off" placeholder="For example: waiting for the half-year result"></div>' +
+      '<div class="modal-actions"><button type="button" class="btn secondary" data-action="watch-cancel">Cancel</button><button type="button" class="btn" data-action="watch-save">Add to watchlist</button></div></div>';
+    document.body.appendChild(el);
+    $("#watch-note").focus();
+  }
+  function saveWatch() {
+    var el = $("#watch-modal"); if (!el) return;
+    var code = el.dataset.code, note = $("#watch-note").value.trim();
+    closeWatch();
+    addWatch(code, note).then(function (l) { state.watch = l; toast(code + " added to the watchlist"); refreshWatchViews(); loadAnnouncements(true); }).catch(function (e) { toast("Not added: " + e.message); });
+  }
+  function refreshWatchViews() {
+    if (state.view === "companies" && $("#companies")) { renderCompanyRows(); return; }
+    var card = $("#watch-card");
+    if (card) card.outerHTML = watchCardHtml();
+    document.querySelectorAll(".band .watch-btn").forEach(function (b) { b.outerHTML = watchBtn(b.dataset.watch, true); });
+  }
+  function watchCardHtml() {
+    if (locked()) return "";
+    var rows = state.watch.map(function (w) {
+      var p = state.prices[w.code] || {}, since = w.ref_price > 0 && p.price > 0 ? p.price / w.ref_price - 1 : null;
+      return '<li class="watch-row"><button type="button" class="watch-main" data-stock="' + esc(w.code) + '">' + monoHtml(w.code) + '<span class="watch-text"><b>' + esc(w.code) + '</b><span class="muted small">' + esc(w.note || p.name || "") + "</span>" +
+        '<span class="muted small">' + esc((w.added_name ? w.added_name + ", " : "") + ago(w.created_at).toLowerCase()) + "</span></span></button>" +
+        '<span class="watch-nums"><b>' + (p.price > 0 ? fmtMoney(p.price) : "No price") + '</b><span class="chg ' + signClass(p.change_pct) + '">' + fmtChange(p.change_pct || 0) + "</span>" +
+        (since !== null ? '<span class="small ' + signClass(since) + '">' + (since >= 0 ? "+" : "") + fmtPct(since) + " since added</span>" : "") + "</span>" +
+        (canWatch() ? '<button type="button" class="watch-x" data-watch="' + esc(w.code) + '" aria-label="Remove ' + esc(w.code) + ' from the watchlist">✕</button>' : "") + "</li>";
+    }).join("");
+    return '<div class="card" id="watch-card"><div class="card-title-row"><h2>Watchlist</h2><span class="muted small">' + (state.watchOn ? "Shared with the fund" : DEMO ? "Demo" : "Saved on this device") + "</span></div>" +
+      (rows ? '<ul class="watch-list">' + rows + "</ul>" : '<p class="muted small" style="margin:0">Nothing is being watched yet. Open any company and press Watch.</p>') + "</div>";
+  }
+
+  // ---------- ASX announcements ----------
+  var annDirectAt = 0, annTried = {};
+  function annUrl(code) { return "https://www.asx.com.au/markets/company/" + encodeURIComponent(code); }
+  function annCodes() {
+    var seen = {}, out = [];
+    computePortfolio(state.trades).positions.forEach(function (p) { if (!seen[p.code] && p.code !== CFG.ETF_CODE) { seen[p.code] = true; out.push(p.code); } });
+    state.watch.forEach(function (w) { if (!seen[w.code]) { seen[w.code] = true; out.push(w.code); } });
+    return out;
+  }
+  function fetchAnnDirect(codes) {
+    return Promise.all(codes.slice(0, 10).map(function (code) {
+      annTried[code] = true;
+      return fetch("https://asx.api.markitdigital.com/asx-research/1.0/companies/" + code.toLowerCase() + "/announcements?count=6")
+        .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+        .then(function (j) {
+          return ((j && j.data && j.data.items) || []).map(function (i) {
+            return { document_key: i.documentKey, code: code, headline: i.headline, announced_at: i.date, price_sensitive: !!i.isPriceSensitive, kind: i.announcementType };
+          }).filter(function (i) { return i.document_key && i.headline && i.announced_at; });
+        }).catch(function () { return null; });
+    })).then(function (lists) {
+      var got = lists.filter(Boolean);
+      if (!got.length) return false;
+      var have = {};
+      state.ann.forEach(function (a) { have[a.document_key] = true; });
+      got.forEach(function (l) { l.forEach(function (a) { if (!have[a.document_key]) { have[a.document_key] = true; state.ann.push(a); } }); });
+      state.ann.sort(function (a, b) { return a.announced_at < b.announced_at ? 1 : -1; });
+      return true;
+    });
+  }
+  function sampleAnn(codes) {
+    var heads = [["Quarterly activities report", true], ["Change of director's interest notice", false], ["Investor presentation", false], ["Trading update", true], ["Dividend and distribution notice", false], ["Appendix 3Y", false], ["Results of annual general meeting", false]];
+    var out = [], now = Date.now();
+    codes.slice(0, 6).forEach(function (code, i) {
+      [0, 1].forEach(function (k) { var h = heads[(i * 2 + k) % heads.length]; out.push({ document_key: "sample-" + code + k, code: code, headline: h[0], announced_at: new Date(now - (i * 9 + k * 31 + 3) * 3600000).toISOString(), price_sensitive: h[1], sample: true }); });
+    });
+    return out.sort(function (a, b) { return a.announced_at < b.announced_at ? 1 : -1; });
+  }
+  // Fills state.ann from the database, or straight from the ASX feed when the database has none.
+  function loadAnnouncements(force) {
+    if (locked()) { state.ann = []; return Promise.resolve(); }
+    var fromDb = DEMO || !sb ? Promise.resolve(null) : sb.from("announcements").select("document_key, code, headline, announced_at, price_sensitive, kind").order("announced_at", { ascending: false }).limit(80)
+      .then(function (r) { state.annOn = !r.error; return r.error ? null : r.data; }, function () { state.annOn = false; return null; });
+    return fromDb.then(function (rows) {
+      if (rows && rows.length) { state.ann = rows; state.annSource = "db"; return; }
+      var codes = annCodes();
+      if (!codes.length) { state.ann = []; return; }
+      if (!force && Date.now() - annDirectAt < 600000) return;
+      annDirectAt = Date.now();
+      if (state.annSource !== "direct") state.ann = [];
+      return fetchAnnDirect(codes).then(function (ok) {
+        if (ok) state.annSource = "direct";
+        else if (DEMO) { state.ann = sampleAnn(codes); state.annSource = "sample"; }
+      });
+    }).then(paintAnnouncements, paintAnnouncements);
+  }
+  function paintAnnouncements() {
+    document.querySelectorAll(".ann-card").forEach(function (el) { el.outerHTML = announcementsCardHtml(el.dataset.code || ""); });
+  }
+  function announcementsCardHtml(code) {
+    if (locked()) return "";
+    var list = state.ann.filter(function (a) { return code ? a.code === code : a.code !== CFG.ETF_CODE; }).slice(0, code ? 6 : 7);
+    var rows = list.map(function (a) {
+      return '<li><a class="ann" href="' + annUrl(a.code) + '" target="_blank" rel="noopener noreferrer">' + (code ? "" : '<span class="ann-code">' + esc(a.code) + "</span>") +
+        '<span class="ann-main"><span class="ann-head">' + esc(a.headline) + "</span>" + '<span class="muted small">' + esc(ago(a.announced_at)) + (a.kind ? " · " + esc(String(a.kind).toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); })) : "") + "</span></span>" +
+        (a.price_sensitive ? '<span class="pill sens" title="The ASX marked this as price sensitive">Price sensitive</span>' : "") + "</a></li>";
+    }).join("");
+    var note = state.annSource === "sample" ? "Sample headlines for the demo" : code ? "From the ASX" : "Stocks the fund holds or watches";
+    return '<div class="card ann-card" data-code="' + esc(code || "") + '"><div class="card-title-row"><h2>ASX announcements</h2><span class="muted small">' + note + "</span></div>" +
+      (rows ? '<ul class="ann-list">' + rows + "</ul>" : '<p class="muted small" style="margin:0">' + (code ? 'No recent announcements loaded. <a href="' + annUrl(code) + '" target="_blank" rel="noopener noreferrer">See them on the ASX' + ICON.ext + "</a>" : annCodes().length ? "No announcements loaded yet. They appear here once the database has fetched them." : "Announcements appear here once the fund holds or watches a stock.") + "</p>") + "</div>";
+  }
+
+  // ---------- order expiry ----------
+  var EXPIRY = [["gtc", "Until cancelled"], ["day", "End of the trading day"], ["7", "7 days"], ["30", "30 days"]];
+  // The next 4:30pm on a Sydney weekday, as an ISO time.
+  function nextSydneyClose() {
+    var now = new Date(), wall = new Date(now.toLocaleString("en-US", { timeZone: "Australia/Sydney" })), offset = wall.getTime() - now.getTime();
+    var t = new Date(wall); t.setHours(16, 30, 0, 0);
+    if (t <= wall) t.setDate(t.getDate() + 1);
+    while (t.getDay() === 0 || t.getDay() === 6) t.setDate(t.getDate() + 1);
+    return new Date(t.getTime() - offset).toISOString();
+  }
+  function expiryDate(kind) {
+    if (kind === "day") return nextSydneyClose();
+    if (kind === "7" || kind === "30") return new Date(Date.now() + Number(kind) * 86400000).toISOString();
+    return null;
+  }
+  function isExpired(o) { return !!(o.expires_at && new Date(o.expires_at).getTime() <= Date.now()); }
+
   // ---------- market heat map ----------
   // Lays boxes out so each one's area matches its value and stays close to square.
   function treemap(items, x, y, w, h, out) {
@@ -2350,7 +2536,13 @@
     var base = [44, 50, 62], to = k >= 0 ? [22, 163, 94] : [214, 48, 49];
     return "rgb(" + base.map(function (b, i) { return Math.round(b + (to[i] - b) * a); }).join(",") + ")";
   }
+  var LS_HEAT = "lighthouse_heatmap";
+  function heatOn() { try { return localStorage.getItem(LS_HEAT) !== "off"; } catch (e) { return true; } }
+  function heatSwitch() {
+    return '<button type="button" class="switch' + (heatOn() ? " on" : "") + '" role="switch" aria-checked="' + heatOn() + '" data-action="toggle-heat"><span class="switch-track"><i></i></span><span>Market map</span></button>';
+  }
   function heatmapHtml() {
+    if (!heatOn()) return '<div class="heat-off">' + heatSwitch() + '<span class="muted small">Turn on to see the ASX 300 as a heat map.</span></div>';
     var list = state.priceList.filter(function (p) { return p.price > 0 && p.sector && p.code !== CFG.ETF_CODE && (!state.sector || p.sector === state.sector); });
     if (list.length < 6) return "";
     var boxW = Math.max(280, Math.min(1320, (window.innerWidth || 1200) - 40)), phone = boxW < 640;
@@ -2376,7 +2568,7 @@
       });
     });
     return '<div class="card heat-card"><div class="heat-head"><div><h2>Market map</h2><p class="muted small">' + (state.sector ? esc(state.sector) + ", " : "The ASX 300 by sector. ") + "Bigger companies get bigger tiles. Colour is today's move." + (Object.keys(held).length ? " A white outline marks what the fund holds." : "") + "</p></div>" +
-      '<div class="heat-legend" aria-hidden="true"><span>-3%</span><i></i><span>+3%</span></div></div>' +
+      '<div class="heat-tools"><div class="heat-legend" aria-hidden="true"><span>-3%</span><i></i><span>+3%</span></div>' + heatSwitch() + "</div></div>" +
       '<div class="heat" style="aspect-ratio:' + W + " / " + H + '">' + html + "</div></div>";
   }
   function paintHeatmap() { var el = $("#heatmap"); if (el) el.innerHTML = heatmapHtml(); }
@@ -2397,6 +2589,23 @@
     tip.style.transform = "translate(" + Math.max(8, x) + "px," + Math.max(8, y) + "px)";
   });
   document.addEventListener("scroll", hideTip, true);
+
+  // ---------- add to home screen (phones) ----------
+  var installEvt = null, LS_INSTALL = "lighthouse_install_hint";
+  window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installEvt = e; showInstall(); });
+  function closeInstall(remember) { var el = $("#install-hint"); if (el) el.remove(); if (remember) { try { localStorage.setItem(LS_INSTALL, "done"); } catch (e) { /* storage unavailable */ } } }
+  function showInstall() {
+    var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone;
+    var seen = false; try { seen = localStorage.getItem(LS_INSTALL) === "done"; } catch (e) { /* storage unavailable */ }
+    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (standalone || seen || $("#install-hint") || window.innerWidth > 700 || (!installEvt && !ios)) return;
+    var el = document.createElement("div");
+    el.id = "install-hint"; el.className = "install-hint";
+    el.innerHTML = '<img src="img/app-192.png" alt="" width="44" height="44"><div class="install-text"><b>Get the Lighthouse app</b><span>' + (installEvt ? "Add it to your home screen." : "Tap Share, then Add to Home Screen.") + "</span></div>" +
+      (installEvt ? '<button type="button" class="btn small-btn" data-action="install-app">Install</button>' : "") + '<button type="button" class="install-x" data-action="install-close" aria-label="Dismiss">✕</button>';
+    document.body.appendChild(el);
+  }
+  setTimeout(showInstall, 4000);
 
   // ---------- one page per stock ----------
   function openStock(code) { state.stock = code; hideTip(); go("stock"); }
@@ -2421,8 +2630,10 @@
     var rank = ranked.map(function (x) { return x.code; }).indexOf(p.code) + 1;
     var hasRange = p.day_low > 0 && p.day_high > 0 && p.day_high >= p.day_low;
     var actions = (canTrade() ? '<button type="button" class="btn" data-trade="' + esc(p.code) + '">Trade ' + esc(p.code) + "</button>" : "") +
+      watchBtn(p.code, true) +
       '<a class="btn ghost" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Market Index' + ICON.ext + "</a>" +
       '<a class="btn ghost" href="' + bookUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Order book' + ICON.ext + "</a>";
+    if (open && !annTried[p.code] && !state.ann.some(function (a) { return a.code === p.code; }) && state.annSource !== "sample") fetchAnnDirect([p.code]).then(function (ok) { if (ok) paintAnnouncements(); });
     var today = '<div class="card"><h2>Today</h2>' +
       (hasRange ? rangeBar(p.day_low, p.day_high, p.price, "Low " + fmtMoney(p.day_low), "High " + fmtMoney(p.day_high), fmtMoney(p.price)) : '<p class="muted small">No trading range is available for today yet.</p>') +
       kv([["Last price", fmtMoney(p.price)], ["Change today", fmtChange(p.change_pct), signClass(p.change_pct)], ["The fund buys at", fmtPrice(quote(p, "buy"))], ["The fund sells at", fmtPrice(quote(p, "sell"))],
@@ -2449,6 +2660,7 @@
       '<div class="grid-2"><div class="stack">' + today +
         (thesis ? '<div class="card thesis"><h2>Why the fund holds it</h2><p>' + esc(thesis) + "</p></div>" : "") +
         (open ? '<div class="card flush"><div class="card-head"><h2>The fund\'s trades in ' + esc(p.code) + "</h2></div>" + (tradeRows ? '<div class="table-scroll"><table><thead><tr><th>When</th><th>Type</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>By</th></tr></thead><tbody>' + tradeRows + "</tbody></table></div>" : '<p class="empty">No trades in this stock yet.</p>') + "</div>" : "") +
+      announcementsCardHtml(p.code) +
       '</div><div class="stack">' + position +
         (orders.length ? '<div class="card"><h2>Open orders</h2><ul class="recent">' + orders.map(function (o) { return '<li><span class="pill ' + o.side + '">' + (o.side === "buy" ? "Buy" : "Sell") + '</span><span class="recent-main"><b>' + fmtQty(o.quantity) + " " + esc(o.code) + "</b>" + (o.kind === "market" ? "at the open" : "at " + fmtMoney(o.limit_price)) + "</span></li>"; }).join("") + "</ul></div>" : "") +
         (peers.length ? '<div class="card"><h2>Others in ' + esc(p.sector) + '</h2><div class="peers">' + peers.map(function (x) {
@@ -2478,6 +2690,7 @@
         "<div><dt>" + (filled ? "Filled" : "Placed") + "</dt><dd>" + esc(fmtDate(new Date().toISOString())) + "</dd></div>" +
         "<div><dt>" + (r.proposer ? "Proposed by" : "Placed by") + "</dt><dd>" + esc(r.proposer || r.by || "") + "</dd></div>" +
         (r.proposer ? "<div><dt>Approved by</dt><dd>" + esc(r.by || "") + "</dd></div>" : "") +
+        (!filled && r.status === "limit" && r.expires !== undefined ? "<div><dt>Good until</dt><dd>" + (r.expires ? esc(fmtDate(r.expires)) : "Until cancelled") + "</dd></div>" : "") +
         (filled && r.cashAfter != null ? "<div><dt>Cash after</dt><dd>" + fmtMoney(r.cashAfter) + "</dd></div>" : "") +
       "</dl>" + (filled ? "" : '<p class="muted small receipt-note">' + (r.status === "queued" ? "It fills at the price when the market next opens." : "It fills if the price reaches the limit while the market is open.") + " You can cancel it on the Trade page.</p>") +
       '<div class="receipt-actions"><button type="button" class="btn secondary" data-receipt="' + (filled ? "history" : "trade") + '">' + (filled ? "View in History" : "See open orders") + '</button><button type="button" class="btn" data-receipt="done">Done</button></div>' +
@@ -2531,8 +2744,9 @@
 
   // ---------- events ----------
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector],[data-approve],[data-reject],[data-fill-order],[data-levels],[data-stock]");
+    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector],[data-approve],[data-reject],[data-fill-order],[data-levels],[data-watch],[data-stock]");
     if (!t) return;
+    if (t.dataset.watch) { e.preventDefault(); return toggleWatch(t.dataset.watch); }
     if (t.dataset.stock) { e.preventDefault(); return openStock(t.dataset.stock); }
     if (t.dataset.view) { e.preventDefault(); return go(t.dataset.view); }
     if (t.dataset.side) {
@@ -2601,6 +2815,11 @@
     var a = t.dataset.action;
     if (a === "submit-order") submitOrder();
     else if (a === "export") exportExcel();
+    else if (a === "toggle-heat") { try { localStorage.setItem(LS_HEAT, heatOn() ? "off" : "on"); } catch (err) { /* storage unavailable */ } hideTip(); paintHeatmap(); }
+    else if (a === "install-app") { if (installEvt) { installEvt.prompt(); installEvt = null; } closeInstall(true); }
+    else if (a === "install-close") closeInstall(true);
+    else if (a === "watch-cancel") closeWatch();
+    else if (a === "watch-save") saveWatch();
     else if (a === "dividend-open") openDividend();
     else if (a === "dividend-cancel") closeDividend();
     else if (a === "levels-cancel") closeLevels();
@@ -2647,7 +2866,9 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && crop) return closeCropper();
+    if (e.key === "Escape" && $("#watch-modal")) return closeWatch();
     if (e.key !== "Enter") return;
+    if (e.target.id === "watch-note") return saveWatch();
     var row = e.target.closest && e.target.closest("tr[data-code]");
     if (row) selectStock(row.dataset.code);
   });
@@ -2667,6 +2888,7 @@
 
   document.addEventListener("change", function (e) {
     if (e.target.id === "sleeve") { state.order.sleeve = e.target.value; renderCalc(); }
+    else if (e.target.id === "expiry") { state.order.expiry = e.target.value; }
     else if (e.target.id === "charter-check") { $('[data-action="agree-charter"]').disabled = !e.target.checked; }
     else if (e.target.dataset.titleFor) {
       var mid = e.target.dataset.titleFor, title = e.target.value.trim();

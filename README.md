@@ -79,3 +79,13 @@ The 15% limit, ETF floor and sleeve cap are checked in the app before an order i
 ## Disclaimer
 
 The AFSA Lighthouse Fund is a simulated student portfolio run for educational purposes. Nothing here is financial advice.
+
+## Added on 14 November 2026
+
+- **Tabs**: capsule with icons and a sliding highlight. On phones the tabs sit along the bottom, and the site can be added to a home screen (`manifest.webmanifest`, icons in `img/app-*.png`).
+- **Market map**: heat map of the ASX 300 on the Companies page, with an on/off switch that each browser remembers.
+- **Stock pages**: every company has its own page (today's range, the fund's position, trades, announcements, others in the sector).
+- **Order receipt**: shown after an order is filled, queued or placed.
+- **Recent activity** on the Portfolio page, and a loading shimmer while the site starts.
+- **Watchlist**, **ASX announcements** and **order expiry** need `supabase/update-2026-11-14.sql`. Without it the watchlist is kept in each browser, announcements are fetched straight from the ASX feed when the browser is allowed to, and limit orders never expire.
+- Announcements come from the public feed behind the ASX website. It is not an official data product and may change or stop without notice.
