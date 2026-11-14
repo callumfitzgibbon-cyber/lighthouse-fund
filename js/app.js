@@ -37,6 +37,8 @@
     report: { month: "", comment: "" },
     search: "",
     sector: "",
+    stock: null, // the company page being looked at
+    receipt: null,
     coSearch: "",
     members: [],
     freshIds: {},
@@ -754,7 +756,7 @@
     ind.style.opacity = "1"; ind.style.transform = to.x; ind.style.width = to.w;
     if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2);
   }
-  window.addEventListener("resize", function () { placeNavInd(null); });
+  window.addEventListener("resize", function () { placeNavInd(null); if (state.view === "companies") paintHeatmap(); });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { placeNavInd(null); });
 
   function renderChrome() {
@@ -768,7 +770,7 @@
     var oldInd = navEl.querySelector(".nav-ind");
     var from = oldInd && oldInd.style.width ? { x: oldInd.style.transform, w: oldInd.style.width } : null;
     navEl.innerHTML = '<span class="nav-ind" aria-hidden="true"></span>' + tabs.map(function (t) {
-      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] ? ' aria-current="page"' : "") + ">" +
+      return '<button type="button" data-view="' + t[0] + '"' + (state.view === t[0] || (state.view === "stock" && t[0] === "companies") ? ' aria-current="page"' : "") + ">" +
         '<svg class="nav-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (NAV_ICONS[t[0]] || "") + "</svg><span>" + t[1] + "</span>" +
         (t[0] === "members" && unseen ? '<span class="count" title="New members">' + unseen + "</span>" : "") +
         (t[0] === "trade" && waiting ? '<span class="count" title="Proposals waiting for you">' + waiting + "</span>" : "") + "</button>";
@@ -840,7 +842,7 @@
     var rows = pf.positions.map(function (p) {
       var over = false; // the limit applies to buying, so a holding that has grown past it is fine
       return "<tr>" +
-        '<td><span class="co">' + monoHtml(p.code, true) + '<span><a class="code" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">' + esc(p.code) + '</a> <span class="pill sleeve">' + esc(sleeveLabel(p.sleeve)) + '</span><div class="muted small">' + esc(p.name) + "</div></span></span></td>" + levelCell(p) +
+        '<td><span class="co">' + monoHtml(p.code, true) + '<span><button type="button" class="code code-btn" data-stock="' + esc(p.code) + '">' + esc(p.code) + '</button> <span class="pill sleeve">' + esc(sleeveLabel(p.sleeve)) + '</span><div class="muted small">' + esc(p.name) + "</div></span></span></td>" + levelCell(p) +
         '<td class="num">' + fmtQty(p.qty) + "</td>" +
         '<td class="num">' + (p.priced ? fmtMoney(p.price) : "No price") + "</td>" +
         '<td class="num">' + fmtMoney(p.value) + "</td>" +
@@ -901,7 +903,7 @@
         "</tbody></table></div></div>" + performanceCardHtml(perf) + attributionCardHtml() + sectorCardHtml(pf) + "</div>" +
         '<div class="stack">' + codeCardHtml() +
           '<div class="card"><h2>Mandate checks</h2><ul class="checks">' + checks + "</ul></div>" + riskCardHtml(perf) +
-          '<div class="card"><h2>Latest trades</h2>' + (recent ? '<ul class="recent">' + recent + "</ul>" : '<p class="muted small" style="margin:0">No trades yet.</p>') + "</div>" +
+          activityCardHtml() +
         "</div>" +
       "</div>";
     drawPerformance(perf);
@@ -1520,10 +1522,11 @@
     var rising = priced.filter(function (p) { return p.change_pct > 0; }).length, falling = priced.filter(function (p) { return p.change_pct < 0; }).length;
     var top = priced.slice().sort(function (a, b) { return Math.abs(b.change_pct) - Math.abs(a.change_pct); })[0];
     $("#main").innerHTML =
-      bandHtml("The universe", "Companies", "Every company the fund can buy. Click one to open its full profile on Market Index in a new tab.", [
+      bandHtml("The universe", "Companies", "Every company the fund can buy. Click any company for its own page.", [
         ["Companies", String(priced.length)], ["Rising today", String(rising), "up"], ["Falling today", String(falling), "down"],
         ["Biggest mover", top ? esc(top.code) + " " + (top.change_pct > 0 ? "+" : "") + top.change_pct.toFixed(1) + "%" : "None", top ? signClass(top.change_pct) : ""]]) +
       (rising + falling > 0 ? '<div class="breadth" title="Share of companies rising and falling today"><span class="breadth-up" style="width:' + (rising / (rising + falling) * 100).toFixed(1) + '%"></span><span class="breadth-down"></span></div>' : "") +
+      '<div id="heatmap">' + heatmapHtml() + "</div>" +
       '<div id="sector-tiles">' + sectorTilesHtml() + "</div>" +
       '<div class="card flush" id="co-table"><div class="card-pad filters">' +
         '<label class="sr-only" for="co-search">Search companies</label><input id="co-search" type="search" placeholder="Search by code or company" value="' + esc(state.coSearch) + '" autocomplete="off">' +
@@ -1545,7 +1548,7 @@
     computePortfolio(state.trades).positions.forEach(function (h) { heldNow[h.code] = true; });
     body.innerHTML = list.map(function (p) {
       return "<tr>" +
-        '<td><span class="co">' + monoHtml(p.code, !!heldNow[p.code]) + '<a class="co-link" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer"><span class="code">' + esc(p.code) + '</span><span class="muted small">' + esc(p.name) + "</span></a></span></td>" +
+        '<td><span class="co">' + monoHtml(p.code, !!heldNow[p.code]) + '<button type="button" class="co-link" data-stock="' + esc(p.code) + '"><span class="code">' + esc(p.code) + '</span><span class="muted small">' + esc(p.name) + "</span></button></span></td>" +
         '<td><span class="pill">' + esc(p.sector) + "</span></td>" +
         '<td class="num">' + (p.price > 0 ? fmtMoney(p.price) : "No price") + "</td>" +
         '<td class="num"><span class="chg ' + signClass(p.change_pct) + '">' + fmtChange(p.change_pct) + "</span></td>" +
@@ -1806,12 +1809,13 @@
   }
 
   function render() {
-    if (locked() && state.view !== "home" && state.view !== "companies" && state.view !== "signin") state.view = "signin";
+    if (locked() && state.view !== "home" && state.view !== "companies" && state.view !== "stock" && state.view !== "signin") state.view = "signin";
     renderChrome();
     setTimeout(playMotion, 0);
     if (state.view === "home") renderHome();
     else if (state.view === "trade") renderTrade();
     else if (state.view === "companies") renderCompanies();
+    else if (state.view === "stock") renderStock();
     else if (state.view === "history") renderHistory();
     else if (state.view === "report") renderReport();
     else if (state.view === "members") renderMembers();
@@ -1870,6 +1874,7 @@
       } else if (state.view === "companies" && $("#companies")) {
         renderChrome();
         $("#sector-tiles").innerHTML = sectorTilesHtml();
+        paintHeatmap();
         renderCompanyRows();
       } else if ((state.view === "profile" && $("#name-form")) || (state.view === "signin" && $("#auth-form"))) {
         renderChrome();
@@ -1905,12 +1910,15 @@
         .then(function () { return store.listOrders(); })
         .then(function (list) {
           state.orders = list;
+          state.receipt = { status: n.queued ? "queued" : "limit", side: o.side, code: info.code, name: info.name, qty: qty, price: n.queued ? n.price : n.limit, sleeve: sleeve, by: state.user.name, proposer: opts.trader_name };
           return n.queued ? "Order queued for the open: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code : "Limit order placed: " + verb.toLowerCase() + " " + fmtQty(qty) + " " + info.code + " at " + fmtMoney(n.limit);
         });
     }
     return store.addTrade({ type: o.side, code: info.code, sleeve: sleeve, quantity: qty, price: n.price, note: opts.note || "", approval: opts.approval || "", trader_name: opts.trader_name })
       .then(function () { return store.listTrades(); })
-      .then(function (t) { state.trades = t; return verb + " order filled: " + fmtQty(qty) + " " + info.code + " at " + fmtPrice(n.price); });
+      .then(function (t) { state.trades = t;
+        state.receipt = { status: "filled", side: o.side, code: info.code, name: info.name, qty: qty, price: n.price, sleeve: sleeve, by: state.user.name, proposer: opts.trader_name, cashAfter: computePortfolio(t).cash };
+        return verb + " order filled: " + fmtQty(qty) + " " + info.code + " at " + fmtPrice(n.price); });
   }
 
   // The words for the box that asks someone to confirm an order.
@@ -1936,7 +1944,8 @@
       executeOrder(o, { approval: needsCode() ? codeFromPhrase(o.approval) : "" }).then(function (msg) {
         state.busy = false;
         clearTicket();
-        toast(msg);
+        if (state.receipt) showReceipt(state.receipt); else toast(msg);
+        state.receipt = null;
         var stillHeld = computePortfolio(state.trades).positions.some(function (p) { return p.code === state.order.code; });
         if (state.order.side === "sell" && !stillHeld) state.order.code = null;
         render();
@@ -2002,7 +2011,7 @@
       if (!ok) return;
       executeOrder(o, { trader_name: x.trader_name, note: ("Proposed by " + (x.trader_name || "an analyst") + ", approved by " + state.user.name + ": " + (x.rationale || "")).slice(0, 240) })
         .then(function (msg) { return store.decideProposal(x.id, "approved").then(function () { return msg; }); })
-        .then(function (msg) { return reloadProposals().then(function () { toast("Approved. " + msg); render(); }); })
+        .then(function (msg) { return reloadProposals().then(function () { render(); if (state.receipt) showReceipt(state.receipt); else toast("Approved. " + msg); state.receipt = null; }); })
         .catch(function (e) { toast("Not approved: " + e.message); });
     });
   }
@@ -2309,10 +2318,222 @@
     }).catch(function (err) { toast("Photo not saved: " + err.message); });
   }
 
+  // ---------- market heat map ----------
+  // Lays boxes out so each one's area matches its value and stays close to square.
+  function treemap(items, x, y, w, h, out) {
+    var total = items.reduce(function (a, i) { return a + i.v; }, 0);
+    if (!(total > 0) || w <= 0 || h <= 0) return out;
+    var scale = w * h / total;
+    var rest = items.map(function (i) { return { it: i, a: i.v * scale }; });
+    while (rest.length) {
+      var short = Math.min(w, h), row = [], sum = 0, best = Infinity, mx = 0, mn = Infinity;
+      while (rest.length) {
+        var c = rest[0], s2 = sum + c.a, m1 = Math.max(mx, c.a), m0 = Math.min(mn, c.a);
+        var worst = Math.max(short * short * m1 / (s2 * s2), s2 * s2 / (short * short * m0));
+        if (row.length && worst > best) break;
+        row.push(rest.shift()); sum = s2; mx = m1; mn = m0; best = worst;
+      }
+      var thick = sum / short, pos = 0;
+      for (var i = 0; i < row.length; i++) {
+        var len = row[i].a / thick;
+        if (w >= h) out.push({ it: row[i].it, x: x, y: y + pos, w: thick, h: len });
+        else out.push({ it: row[i].it, x: x + pos, y: y, w: len, h: thick });
+        pos += len;
+      }
+      if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+    }
+    return out;
+  }
+  // Slate when flat, deepening to green or red by 3% either way.
+  function heatColor(c) {
+    var k = Math.max(-1, Math.min(1, (c || 0) / 3)), a = Math.pow(Math.abs(k), 0.7);
+    var base = [44, 50, 62], to = k >= 0 ? [22, 163, 94] : [214, 48, 49];
+    return "rgb(" + base.map(function (b, i) { return Math.round(b + (to[i] - b) * a); }).join(",") + ")";
+  }
+  function heatmapHtml() {
+    var list = state.priceList.filter(function (p) { return p.price > 0 && p.sector && p.code !== CFG.ETF_CODE && (!state.sector || p.sector === state.sector); });
+    if (list.length < 6) return "";
+    var boxW = Math.max(280, Math.min(1320, (window.innerWidth || 1200) - 40)), phone = boxW < 640;
+    var W = 100, H = phone ? 150 : boxW < 980 ? 70 : 46, px = boxW / W;
+    var caps = list.map(function (p) { return p.market_cap; }).filter(function (v) { return v > 0; }).sort(function (a, b) { return a - b; });
+    var floor = caps.length ? caps[0] : 1;
+    var size = function (p) { return Math.pow(p.market_cap > 0 ? p.market_cap : floor, 0.72); };
+    var groups = {};
+    list.forEach(function (p) { (groups[p.sector] || (groups[p.sector] = { name: p.sector, v: 0, items: [] })).items.push({ p: p, v: size(p) }); });
+    var secs = Object.keys(groups).map(function (k) { var g = groups[k]; g.v = g.items.reduce(function (a, i) { return a + i.v; }, 0); g.items.sort(function (a, b) { return b.v - a.v; }); return g; })
+      .sort(function (a, b) { return b.v - a.v; });
+    var held = {};
+    if (!locked()) computePortfolio(state.trades).positions.forEach(function (h) { held[h.code] = true; });
+    var html = "", n = 0, headH = 20 / px;
+    treemap(secs, 0, 0, W, H, []).forEach(function (s) {
+      var g = s.it, showHead = s.h * px > 54 && s.w * px > 70, top = showHead ? headH : 0;
+      if (showHead) html += '<button type="button" class="heat-sec" data-sector="' + esc(state.sector ? "*" : g.name) + '" style="left:' + (s.x / W * 100).toFixed(3) + "%;top:" + (s.y / H * 100).toFixed(3) + "%;width:" + (s.w / W * 100).toFixed(3) + '%">' + (state.sector ? "← All sectors · " : "") + esc(g.name) + "</button>";
+      treemap(g.items, s.x, s.y + top, s.w, s.h - top, []).forEach(function (r) {
+        var p = r.it.p, wpx = r.w * px, hpx = r.h * px, c = p.change_pct;
+        var cls = wpx > 96 && hpx > 62 ? " xl" : wpx > 58 && hpx > 40 ? " lg" : wpx > 34 && hpx > 20 ? " md" : " sm";
+        html += '<button type="button" class="heat-tile' + cls + (held[p.code] ? " held" : "") + '" data-stock="' + esc(p.code) + '" data-tip="' + esc(p.name + "|" + p.sector + "|" + fmtMoney(p.price) + "|" + fmtChange(c) + "|" + fmtCap(p.market_cap) + (held[p.code] ? "|held" : "")) + '" aria-label="' + esc(p.code + ", " + p.name + ", " + fmtChange(c)) + '" style="left:' + (r.x / W * 100).toFixed(3) + "%;top:" + (r.y / H * 100).toFixed(3) + "%;width:" + (r.w / W * 100).toFixed(3) + "%;height:" + (r.h / H * 100).toFixed(3) + "%;background:" + heatColor(c) + ";--i:" + (n++ % 40) + '">' +
+          (cls !== " sm" ? "<b>" + esc(p.code) + "</b>" : "") + (cls === " xl" || cls === " lg" ? "<i>" + fmtChange(c) + "</i>" : "") + "</button>";
+      });
+    });
+    return '<div class="card heat-card"><div class="heat-head"><div><h2>Market map</h2><p class="muted small">' + (state.sector ? esc(state.sector) + ", " : "The ASX 300 by sector. ") + "Bigger companies get bigger tiles. Colour is today's move." + (Object.keys(held).length ? " A white outline marks what the fund holds." : "") + "</p></div>" +
+      '<div class="heat-legend" aria-hidden="true"><span>-3%</span><i></i><span>+3%</span></div></div>' +
+      '<div class="heat" style="aspect-ratio:' + W + " / " + H + '">' + html + "</div></div>";
+  }
+  function paintHeatmap() { var el = $("#heatmap"); if (el) el.innerHTML = heatmapHtml(); }
+  function hideTip() { var t = $("#heat-tip"); if (t) t.remove(); }
+  document.addEventListener("mousemove", function (e) {
+    var tile = e.target.closest && e.target.closest(".heat-tile");
+    if (!tile) return hideTip();
+    var tip = $("#heat-tip");
+    if (!tip) { tip = document.createElement("div"); tip.id = "heat-tip"; tip.className = "heat-tip"; document.body.appendChild(tip); }
+    if (tip.dataset.code !== tile.dataset.stock) {
+      var d = tile.dataset.tip.split("|"), up = d[3].charAt(0) === "+", down = d[3].charAt(0) === "-" || d[3].charAt(0) === "−";
+      tip.dataset.code = tile.dataset.stock;
+      tip.innerHTML = '<div class="heat-tip-top"><b>' + esc(tile.dataset.stock) + '</b><span class="chg ' + (up ? "up" : down ? "down" : "") + '">' + esc(d[3]) + "</span></div><div>" + esc(d[0]) + '</div><div class="muted small">' + esc(d[1]) + " · " + esc(d[2]) + " · " + esc(d[4]) + "</div>" + (d[5] ? '<div class="heat-tip-held">The fund holds this</div>' : "");
+    }
+    var x = e.clientX + 16, y = e.clientY + 18, w = tip.offsetWidth, h = tip.offsetHeight;
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - 12;
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - 12;
+    tip.style.transform = "translate(" + Math.max(8, x) + "px," + Math.max(8, y) + "px)";
+  });
+  document.addEventListener("scroll", hideTip, true);
+
+  // ---------- one page per stock ----------
+  function openStock(code) { state.stock = code; hideTip(); go("stock"); }
+  function rangeBar(lo, hi, at, loLabel, hiLabel, atLabel) {
+    var span = hi - lo, k = span > 0 ? Math.max(0, Math.min(1, (at - lo) / span)) : 0.5;
+    return '<div class="range"><div class="range-track"><span class="range-fill" style="width:' + (k * 100).toFixed(1) + '%"></span><span class="range-dot" style="left:' + (k * 100).toFixed(1) + '%"><em>' + atLabel + "</em></span></div>" +
+      '<div class="range-ends"><span>' + loLabel + "</span><span>" + hiLabel + "</span></div></div>";
+  }
+  function kv(rows) {
+    return '<dl class="kv">' + rows.filter(Boolean).map(function (r) { return "<div><dt>" + esc(r[0]) + '</dt><dd class="' + (r[2] || "") + '">' + r[1] + "</dd></div>"; }).join("") + "</dl>";
+  }
+  function renderStock() {
+    var p = state.prices[state.stock];
+    if (!p) { state.view = "companies"; return renderCompanies(); }
+    var open = !locked(), pf = open ? computePortfolio(state.trades) : { positions: [] };
+    var h = pf.positions.filter(function (x) { return x.code === p.code; })[0];
+    var lv = state.levels[p.code] || {}, thesis = (CFG.THESES || {})[p.code];
+    var trades = open ? state.trades.filter(function (t) { return t.code === p.code; }).slice().reverse() : [];
+    var orders = open ? state.orders.filter(function (o) { return o.code === p.code; }) : [];
+    var peers = state.priceList.filter(function (x) { return x.sector === p.sector && x.code !== p.code && x.price > 0; }).sort(function (a, b) { return b.market_cap - a.market_cap; }).slice(0, 6);
+    var ranked = state.priceList.filter(function (x) { return x.market_cap > 0 && x.code !== CFG.ETF_CODE; }).sort(function (a, b) { return b.market_cap - a.market_cap; });
+    var rank = ranked.map(function (x) { return x.code; }).indexOf(p.code) + 1;
+    var hasRange = p.day_low > 0 && p.day_high > 0 && p.day_high >= p.day_low;
+    var actions = (canTrade() ? '<button type="button" class="btn" data-trade="' + esc(p.code) + '">Trade ' + esc(p.code) + "</button>" : "") +
+      '<a class="btn ghost" href="' + infoUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Market Index' + ICON.ext + "</a>" +
+      '<a class="btn ghost" href="' + bookUrl(p.code) + '" target="_blank" rel="noopener noreferrer">Order book' + ICON.ext + "</a>";
+    var today = '<div class="card"><h2>Today</h2>' +
+      (hasRange ? rangeBar(p.day_low, p.day_high, p.price, "Low " + fmtMoney(p.day_low), "High " + fmtMoney(p.day_high), fmtMoney(p.price)) : '<p class="muted small">No trading range is available for today yet.</p>') +
+      kv([["Last price", fmtMoney(p.price)], ["Change today", fmtChange(p.change_pct), signClass(p.change_pct)], ["The fund buys at", fmtPrice(quote(p, "buy"))], ["The fund sells at", fmtPrice(quote(p, "sell"))],
+        ["Market cap", fmtCap(p.market_cap)], rank ? ["Size rank", rank + " of " + ranked.length] : null]) + "</div>";
+    var position = "";
+    if (!open) position = '<div class="card members-only"><h2>The fund\'s position</h2><p class="muted">Sign in to see whether the fund holds ' + esc(p.code) + ' and every trade it has made.</p><button type="button" class="btn" data-view="signin">Sign in</button></div>';
+    else if (h) {
+      var avg = h.qty > 0 ? h.cost / h.qty : 0;
+      position = '<div class="card"><div class="card-title-row"><h2>The fund\'s position</h2><span class="pill sleeve">' + esc(sleeveLabel(h.sleeve)) + "</span></div>" +
+        '<div class="pos-hero"><div><div class="eyebrow">Value</div><div class="pos-value">' + fmtMoney(h.value) + '</div></div><div class="delta ' + (signClass(h.gain) || "flat") + '">' + (h.gain >= 0 ? "+" : "") + fmtMoney(h.gain) + " · " + (h.gain >= 0 ? "+" : "") + fmtPct(h.gainPct) + "</div></div>" +
+        kv([["Shares", fmtQty(h.qty)], ["Average cost", fmtPrice(avg)], ["Cost", fmtMoney(h.cost)], ["Weight in the fund", fmtPct(h.weight)]]) +
+        (lv.target > 0 && lv.stop > 0 && lv.target > lv.stop ? '<div class="eyebrow" style="margin-top:18px">Between review price and target</div>' + rangeBar(lv.stop, lv.target, p.price, "Review " + fmtMoney(lv.stop), "Target " + fmtMoney(lv.target), fmtMoney(p.price)) :
+          state.levelsOn ? '<p class="muted small" style="margin:14px 0 0">' + (lv.target > 0 ? "Target " + fmtMoney(lv.target) + ". " : "") + (lv.stop > 0 ? "Review at " + fmtMoney(lv.stop) + ". " : "") + (!(lv.target > 0) && !(lv.stop > 0) ? "No price target or review price set. " : "") + (canTrade() ? '<button type="button" class="link small" data-levels="' + esc(p.code) + '">Change</button>' : "") + "</p>" : "") +
+        "</div>";
+    } else position = '<div class="card"><h2>The fund\'s position</h2><p class="muted" style="margin:0">The fund does not hold ' + esc(p.code) + (trades.length ? " now, but it has traded it before." : ".") + "</p></div>";
+    var tradeRows = trades.map(function (t) {
+      return '<tr><td class="nowrap">' + esc(fmtDate(t.created_at)) + '</td><td><span class="pill ' + t.type + '">' + esc(t.type.charAt(0).toUpperCase() + t.type.slice(1)) + '</span></td><td class="num">' + (t.quantity ? fmtQty(t.quantity) : "") + '</td><td class="num">' + (t.price ? fmtPrice(t.price) : "") + '</td><td class="num">' + fmtMoney(t.type === "dividend" ? t.cash_amount : t.quantity * t.price) + "</td><td>" + esc(t.trader_name || "") + "</td></tr>";
+    }).join("");
+    $("#main").innerHTML =
+      '<button type="button" class="back" data-view="companies">← All companies</button>' +
+      bandHtml(p.sector || "Company", p.name || p.code, "ASX: " + esc(p.code) + (h ? ' · <b class="held-flag">Held by the fund</b>' : ""), [
+        ["Price", fmtMoney(p.price)], ["Today", fmtChange(p.change_pct), signClass(p.change_pct)], ["Market cap", fmtCap(p.market_cap)], h ? ["Fund holds", whole(h.value)] : ["Sector", esc(p.sector || "Unknown")]],
+        actions, '<span class="mono big' + (h ? " held" : "") + '" aria-hidden="true">' + esc(p.code.slice(0, 3)) + "</span>") +
+      '<div class="grid-2"><div class="stack">' + today +
+        (thesis ? '<div class="card thesis"><h2>Why the fund holds it</h2><p>' + esc(thesis) + "</p></div>" : "") +
+        (open ? '<div class="card flush"><div class="card-head"><h2>The fund\'s trades in ' + esc(p.code) + "</h2></div>" + (tradeRows ? '<div class="table-scroll"><table><thead><tr><th>When</th><th>Type</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>By</th></tr></thead><tbody>' + tradeRows + "</tbody></table></div>" : '<p class="empty">No trades in this stock yet.</p>') + "</div>" : "") +
+      '</div><div class="stack">' + position +
+        (orders.length ? '<div class="card"><h2>Open orders</h2><ul class="recent">' + orders.map(function (o) { return '<li><span class="pill ' + o.side + '">' + (o.side === "buy" ? "Buy" : "Sell") + '</span><span class="recent-main"><b>' + fmtQty(o.quantity) + " " + esc(o.code) + "</b>" + (o.kind === "market" ? "at the open" : "at " + fmtMoney(o.limit_price)) + "</span></li>"; }).join("") + "</ul></div>" : "") +
+        (peers.length ? '<div class="card"><h2>Others in ' + esc(p.sector) + '</h2><div class="peers">' + peers.map(function (x) {
+          return '<button type="button" class="mover" data-stock="' + esc(x.code) + '"><span><b>' + esc(x.code) + '</b><span class="muted small">' + esc(x.name) + '</span></span><span class="num ' + signClass(x.change_pct) + '">' + fmtChange(x.change_pct) + "</span></button>"; }).join("") + "</div></div>" : "") +
+      "</div></div>";
+  }
+
+  // ---------- order receipt ----------
+  function showReceipt(r) {
+    if (!r) return;
+    var old = $("#receipt-modal"); if (old) old.remove();
+    var filled = r.status === "filled", buy = r.side === "buy";
+    var el = document.createElement("div");
+    el.className = "modal"; el.id = "receipt-modal";
+    el.innerHTML = '<div class="receipt ' + (filled ? "filled " : "waiting ") + r.side + '" role="dialog" aria-modal="true" aria-labelledby="receipt-title">' +
+      '<div class="receipt-top"><div class="receipt-mark">' + (filled
+        ? '<svg viewBox="0 0 52 52" width="56" height="56" aria-hidden="true"><circle cx="26" cy="26" r="23" fill="none" stroke-width="3"/><path d="M15 27l8 8 15-17" fill="none" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        : '<svg viewBox="0 0 52 52" width="56" height="56" aria-hidden="true"><circle cx="26" cy="26" r="23" fill="none" stroke-width="3"/><path d="M26 14v13l8 5" fill="none" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>') + "</div>" +
+        '<div class="eyebrow light" id="receipt-title">' + (filled ? "Order filled" : r.status === "queued" ? "Queued for the open" : "Limit order placed") + "</div>" +
+        '<div class="receipt-line"><span class="receipt-side">' + (filled ? (buy ? "Bought" : "Sold") : (buy ? "Buy" : "Sell")) + "</span> " + fmtQty(r.qty) + " <b>" + esc(r.code) + "</b></div>" +
+        '<div class="receipt-name">' + esc(r.name || "") + "</div></div>" +
+      '<div class="receipt-tear" aria-hidden="true"></div>' +
+      '<div class="receipt-body"><dl>' +
+        "<div><dt>" + (filled ? "Fill price" : r.status === "queued" ? "Price now" : "Limit price") + "</dt><dd>" + fmtPrice(r.price) + "</dd></div>" +
+        "<div><dt>" + (filled ? "Total" : "About") + '</dt><dd class="big">' + fmtMoney(r.qty * r.price) + "</dd></div>" +
+        "<div><dt>Sleeve</dt><dd>" + esc(sleeveLabel(r.sleeve)) + "</dd></div>" +
+        "<div><dt>" + (filled ? "Filled" : "Placed") + "</dt><dd>" + esc(fmtDate(new Date().toISOString())) + "</dd></div>" +
+        "<div><dt>" + (r.proposer ? "Proposed by" : "Placed by") + "</dt><dd>" + esc(r.proposer || r.by || "") + "</dd></div>" +
+        (r.proposer ? "<div><dt>Approved by</dt><dd>" + esc(r.by || "") + "</dd></div>" : "") +
+        (filled && r.cashAfter != null ? "<div><dt>Cash after</dt><dd>" + fmtMoney(r.cashAfter) + "</dd></div>" : "") +
+      "</dl>" + (filled ? "" : '<p class="muted small receipt-note">' + (r.status === "queued" ? "It fills at the price when the market next opens." : "It fills if the price reaches the limit while the market is open.") + " You can cancel it on the Trade page.</p>") +
+      '<div class="receipt-actions"><button type="button" class="btn secondary" data-receipt="' + (filled ? "history" : "trade") + '">' + (filled ? "View in History" : "See open orders") + '</button><button type="button" class="btn" data-receipt="done">Done</button></div>' +
+      (DEMO ? '<div class="receipt-foot">Demo trade. The real fund is not touched.</div>' : '<div class="receipt-foot">' + esc(CFG.FUND_NAME) + " · simulated trade, no real money</div>") + "</div></div>";
+    var close = function () { document.removeEventListener("keydown", onKey); el.remove(); };
+    var onKey = function (e) { if (e.key === "Escape" || e.key === "Enter") { e.preventDefault(); close(); } };
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-receipt]");
+      if (b) { e.stopPropagation(); close(); if (b.dataset.receipt === "history") go("history"); else if (b.dataset.receipt === "trade" && state.view !== "trade") go("trade"); }
+      else if (e.target === el) close();
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(el);
+    el.querySelector('[data-receipt="done"]').focus();
+  }
+
+  // ---------- recent activity ----------
+  function ago(iso) {
+    var s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!(s >= 0)) return fmtDay(iso);
+    if (s < 90) return "Just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 86400) return Math.round(s / 3600) + (Math.round(s / 3600) === 1 ? " hour ago" : " hours ago");
+    if (s < 86400 * 7) return Math.round(s / 86400) + (Math.round(s / 86400) === 1 ? " day ago" : " days ago");
+    return fmtDay(iso);
+  }
+  function activityCardHtml() {
+    var ev = [];
+    state.trades.forEach(function (t) {
+      if (t.type === "buy" || t.type === "sell") ev.push({ at: t.created_at, kind: t.type, title: (t.type === "buy" ? "Bought " : "Sold ") + fmtQty(t.quantity) + " " + t.code, sub: "at " + fmtPrice(t.price) + " · " + fmtMoney(t.quantity * t.price), who: t.trader_name, code: t.code });
+      else if (t.type === "dividend") ev.push({ at: t.created_at, kind: "div", title: "Dividend from " + (t.code || "a holding"), sub: fmtMoney(t.cash_amount) + " added to cash", who: t.trader_name, code: t.code });
+      else if (t.type === "deposit") ev.push({ at: t.created_at, kind: "start", title: "Fund opened", sub: fmtMoney(t.cash_amount) + " starting capital" });
+    });
+    state.proposals.forEach(function (x) {
+      var line = (x.side === "buy" ? "buy " : "sell ") + x.code;
+      if (x.status === "pending") ev.push({ at: x.created_at, kind: "prop", title: "Proposal to " + line, sub: "Waiting for the Fund Manager", who: x.trader_name, code: x.code });
+      else if (x.decided_at) ev.push({ at: x.decided_at, kind: x.status === "approved" ? "ok" : "no", title: "Proposal to " + line + " " + x.status, sub: "Proposed by " + (x.trader_name || "an analyst"), who: x.decided_name, code: x.code });
+    });
+    state.orders.forEach(function (o) {
+      ev.push({ at: o.created_at, kind: "wait", title: (o.kind === "market" ? "Order queued: " : "Limit order: ") + (o.side === "buy" ? "buy " : "sell ") + fmtQty(o.quantity) + " " + o.code, sub: o.kind === "market" ? "Fills at the next open" : "Waiting for " + fmtMoney(o.limit_price), who: o.trader_name, code: o.code });
+    });
+    ev.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+    var glyph = { buy: "↑", sell: "↓", div: "$", start: "★", prop: "?", ok: "✓", no: "✕", wait: "…" };
+    var rows = ev.slice(0, 8).map(function (e, i) {
+      return '<li class="act ' + e.kind + '" style="--d:' + (i * 70) + 'ms"><span class="act-dot" aria-hidden="true">' + glyph[e.kind] + '</span><div class="act-main"><div class="act-title">' + esc(e.title) + '</div><div class="muted small">' + esc(e.sub) + "</div></div>" +
+        '<div class="act-when"><span>' + esc(ago(e.at)) + "</span>" + (e.who && e.who !== "System" ? '<span class="muted">' + esc(e.who) + "</span>" : "") + "</div></li>";
+    }).join("");
+    return '<div class="card"><div class="card-title-row"><h2>Recent activity</h2><button type="button" class="link small" data-view="history">All history</button></div>' +
+      (rows ? '<ol class="activity">' + rows + "</ol>" : '<p class="muted small" style="margin:0">Nothing has happened yet.</p>') + "</div>";
+  }
+
   // ---------- events ----------
   document.addEventListener("click", function (e) {
-    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector],[data-approve],[data-reject],[data-fill-order],[data-levels]");
+    var t = e.target.closest("[data-view],[data-action],[data-side],[data-code],[data-trade],[data-qtymode],[data-otype],[data-cancel-order],[data-remove-member],[data-hist],[data-sector],[data-approve],[data-reject],[data-fill-order],[data-levels],[data-stock]");
     if (!t) return;
+    if (t.dataset.stock) { e.preventDefault(); return openStock(t.dataset.stock); }
     if (t.dataset.view) { e.preventDefault(); return go(t.dataset.view); }
     if (t.dataset.side) {
       state.order.side = t.dataset.side;
@@ -2325,6 +2546,7 @@
     if (t.dataset.sector) {
       state.sector = t.dataset.sector === "*" || state.sector === t.dataset.sector ? "" : t.dataset.sector;
       $("#sector-tiles").innerHTML = sectorTilesHtml();
+      paintHeatmap(); hideTip();
       if ($("#co-sector")) $("#co-sector").value = state.sector;
       return renderCompanyRows();
     }
@@ -2339,7 +2561,8 @@
       if (!fo || !fi) return;
       var fp = fo.kind === "market" ? quote(fi, fo.side) : fo.limit_price;
       store.fillOrder(fo.id, fp).then(function () { return Promise.all([store.listTrades(), store.listOrders()]); })
-        .then(function (r) { state.trades = r[0]; state.orders = r[1]; toast("Order filled: " + fo.code + " at " + fmtPrice(fp)); render(); })
+        .then(function (r) { state.trades = r[0]; state.orders = r[1]; render();
+          showReceipt({ status: "filled", side: fo.side, code: fo.code, name: fi.name, qty: fo.quantity, price: fp, sleeve: fo.sleeve, by: fo.trader_name || state.user.name, cashAfter: computePortfolio(r[0]).cash }); })
         .catch(function (err) { toast("Not filled: " + err.message); });
       return;
     }
@@ -2453,7 +2676,7 @@
         if (state.view === "members") render();
       }).catch(function (err) { toast("Not saved: " + err.message); });
     }
-    else if (e.target.id === "co-sector") { state.sector = e.target.value; $("#sector-tiles").innerHTML = sectorTilesHtml(); renderCompanyRows(); }
+    else if (e.target.id === "co-sector") { state.sector = e.target.value; $("#sector-tiles").innerHTML = sectorTilesHtml(); paintHeatmap(); renderCompanyRows(); }
     else if (e.target.id === "avatar-file") {
       var file = e.target.files && e.target.files[0];
       if (file) openCropper(file);
